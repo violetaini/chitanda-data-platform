@@ -1,0 +1,8 @@
+[Unit]
+Description=Observe managed HTTPS ingress certificates
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=15s
+AccuracySec=1s
+[Install]
+WantedBy=timers.target

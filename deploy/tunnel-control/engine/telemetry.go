@@ -80,6 +80,11 @@ func (e *Engine) tlsReportLocked() TLSReport {
 			}
 		}
 	}
+	if e.serverTLS.Load() == nil && e.cfg.HTTPSIngress != nil {
+		if cert := loadedCertificate(e.publicCert.Load()); cert != nil {
+			report.Entries = append(report.Entries, TLSInfo{Side: "server", Usage: "https-ingress", RelayID: e.cfg.ID, Active: true, MinimumVersion: "TLS 1.3", Certificate: cert})
+		}
+	}
 	keys := make([]string, 0, len(e.links))
 	for key := range e.links {
 		keys = append(keys, key)
@@ -87,6 +92,9 @@ func (e *Engine) tlsReportLocked() TLSReport {
 	sort.Strings(keys)
 	for _, key := range keys {
 		l := e.links[key]
+		if l.transport == "stream" {
+			continue
+		}
 		l.mu.RLock()
 		entry := TLSInfo{Side: "client", Usage: "channel", RelayID: l.relay.ID, Transport: l.transport, ServerName: l.serverName, Active: l.connected}
 		if l.tlsObservation != nil {

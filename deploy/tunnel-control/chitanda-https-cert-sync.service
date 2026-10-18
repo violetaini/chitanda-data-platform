@@ -1,0 +1,9 @@
+[Unit]
+Description=Apply managed HTTPS ingress certificate to Nginx
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/chitanda-transit/external-https-cert-sync.py
+User=root
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true

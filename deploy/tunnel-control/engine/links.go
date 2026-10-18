@@ -63,8 +63,15 @@ func (e *Engine) reconcileLinks() {
 			e.err(err)
 			continue
 		}
+		port := relay.Port
+		if r.Transport == "stream" {
+			port = relay.StreamPort
+			if port == 0 {
+				port = 11323
+			}
+		}
 		l := &Link{relay: relay, transport: r.Transport, serverName: r.ServerName, signature: signature}
-		cli, err := client.New(client.Config{Server: net.JoinHostPort(relay.Host, fmt.Sprint(relay.Port)), ServerName: r.ServerName, Path: relay.Path, PSK: psk, TCPTransport: r.Transport, TCPPoolSize: 1, UDPPoolSize: 1, QUICInitialPacketSize: 1252, TLSObserver: l.observeTLS})
+		cli, err := client.New(client.Config{Server: net.JoinHostPort(relay.Host, fmt.Sprint(port)), ServerID: relay.ID, ServerName: r.ServerName, Path: relay.Path, PSK: psk, TCPTransport: r.Transport, TCPPoolSize: 1, UDPPoolSize: 1, QUICInitialPacketSize: 1252, TLSObserver: l.observeTLS})
 		if err != nil {
 			e.err(err)
 			continue

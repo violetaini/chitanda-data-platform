@@ -27,7 +27,7 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.5.0"
+const version = "2.7.0"
 
 type Route struct {
 	RelayID    string `json:"relayId"`
@@ -46,6 +46,7 @@ type Node struct {
 	Token string `json:"token"`
 }
 type Relay struct {
+	StreamPort  int    `json:"streamPort,omitempty"`
 	BrokerToken string `json:"brokerToken,omitempty"`
 	ID          string `json:"id"`
 	CertPEM     string `json:"certPEM"`
@@ -58,26 +59,28 @@ type Relay struct {
 	CA          string `json:"ca"`
 }
 type Config struct {
-	Checks            []RouteCheckTask   `json:"checks,omitempty"`
-	DataGateway       *DataGatewayConfig `json:"dataGateway,omitempty"`
-	CredentialVersion string             `json:"credentialVersion"`
-	CA                string             `json:"ca"`
-	Relays            []Relay            `json:"relays"`
-	SelfRelay         *Relay             `json:"selfRelay,omitempty"`
-	Controller        string             `json:"controller"`
-	ControllerAddress string             `json:"controllerAddress"`
-	ID                string             `json:"id"`
-	Token             string             `json:"token"`
-	Role              string             `json:"role"`
-	Revision          int                `json:"revision"`
-	Listen            string             `json:"listen"`
-	Cert              string             `json:"cert"`
-	Key               string             `json:"key"`
-	PSK               string             `json:"psk"`
-	Path              string             `json:"path"`
-	Nodes             []Node             `json:"nodes"`
-	Routes            []Route            `json:"routes"`
-	Relay             Relay              `json:"relay"`
+	HTTPSIngress      *HTTPSIngressConfig `json:"httpsIngress,omitempty"`
+	HTTPSCertificate  *ManagedCertificate `json:"httpsCertificate,omitempty"`
+	Checks            []RouteCheckTask    `json:"checks,omitempty"`
+	DataGateway       *DataGatewayConfig  `json:"dataGateway,omitempty"`
+	CredentialVersion string              `json:"credentialVersion"`
+	CA                string              `json:"ca"`
+	Relays            []Relay             `json:"relays"`
+	SelfRelay         *Relay              `json:"selfRelay,omitempty"`
+	Controller        string              `json:"controller"`
+	ControllerAddress string              `json:"controllerAddress"`
+	ID                string              `json:"id"`
+	Token             string              `json:"token"`
+	Role              string              `json:"role"`
+	Revision          int                 `json:"revision"`
+	Listen            string              `json:"listen"`
+	Cert              string              `json:"cert"`
+	Key               string              `json:"key"`
+	PSK               string              `json:"psk"`
+	Path              string              `json:"path"`
+	Nodes             []Node              `json:"nodes"`
+	Routes            []Route             `json:"routes"`
+	Relay             Relay               `json:"relay"`
 }
 type Hello struct {
 	Transport  string `json:"transport,omitempty"`
@@ -183,7 +186,7 @@ func (e *Engine) report() map[string]any {
 			}
 		}
 	}
-	return map[string]any{"routeChecks": e.checkReports(), "capabilities": map[string]any{"routeProbe": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
+	return map[string]any{"routeChecks": e.checkReports(), "capabilities": map[string]any{"routeProbe": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
 }
 func (e *Engine) syncConfig() error {
 	e.syncMu.Lock()
@@ -228,7 +231,11 @@ func (e *Engine) syncConfig() error {
 		}
 		e.cert.Store(&certificate)
 	}
+	if err := e.applyHTTPSCertificate(update.HTTPSCertificate); err != nil {
+		return fmt.Errorf("HTTPS certificate update failed: %w", err)
+	}
 	e.mu.Lock()
+	e.cfg.HTTPSCertificate = update.HTTPSCertificate
 	e.cfg.CredentialVersion = update.CredentialVersion
 	e.cfg.CA = update.CA
 	e.cfg.Relays = update.Relays
@@ -544,6 +551,9 @@ func (e *Engine) runRelay() error {
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		if publicCertificate != nil && hello.ServerName == cfg.DataGateway.Domain {
+			if current := e.publicCert.Load(); current != nil {
+				return current, nil
+			}
 			return publicCertificate, nil
 		}
 		c := e.cert.Load()
@@ -572,7 +582,29 @@ func (e *Engine) runRelay() error {
 	h3.QUICConfig.InitialConnectionReceiveWindow = 512 << 10
 	h3.QUICConfig.MaxConnectionReceiveWindow = 2 << 20
 	h3.QUICConfig.Allow0RTT = false
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
+	streamPort := 11323
+	if cfg.SelfRelay != nil && cfg.SelfRelay.StreamPort > 0 {
+		streamPort = cfg.SelfRelay.StreamPort
+	}
+	streamListener, err := net.Listen("tcp", fmt.Sprintf(":%d", streamPort))
+	if err != nil {
+		return err
+	}
+	defer streamListener.Close()
+	stream := server.NewStreamServer(psk, cfg.ID, replays, func(ctx context.Context, network, address string) (net.Conn, error) {
+		if network != "tcp" {
+			return nil, errors.New("TCP only")
+		}
+		return e.brokerConnection(ctx, address)
+	})
+	stream.SetMaxConns(96)
+	stream.SetHandshakeLimit(16)
+	defer stream.Close()
+	e.mu.Lock()
+	e.transports = append(e.transports, "stream")
+	e.mu.Unlock()
+	go func() { errCh <- stream.Serve(streamListener) }()
 	go func() { errCh <- h3.ListenAndServe() }()
 	go func() { errCh <- srv.ListenAndServeTLS("", "") }()
 	e.reconcileListeners()
@@ -709,12 +741,15 @@ func main() {
 	if raw, err := os.ReadFile("/var/lib/chitanda-transit/runtime.json"); err == nil {
 		var cached Config
 		if json.Unmarshal(raw, &cached) == nil && compatibleCache(cfg, cached) {
-			gateway := cfg.DataGateway
+			gateway, ingress := cfg.DataGateway, cfg.HTTPSIngress
 			cfg = cached
-			cfg.DataGateway = gateway
+			cfg.DataGateway, cfg.HTTPSIngress = gateway, ingress
 		}
 	}
 	e := &Engine{cfg: cfg, started: time.Now(), pools: map[string]chan net.Conn{}, listeners: map[string]net.Listener{}, outbound: make(chan struct{}, 32), slots: make(chan struct{}, 96), links: map[string]*Link{}, connections: map[*slotConn]Hello{}}
+	if err := e.applyHTTPSCertificate(cfg.HTTPSCertificate); err != nil {
+		log.Fatal(err)
+	}
 	if cfg.SelfRelay != nil {
 		certificate, err := tls.X509KeyPair([]byte(cfg.SelfRelay.CertPEM), []byte(cfg.SelfRelay.KeyPEM))
 		if err == nil {

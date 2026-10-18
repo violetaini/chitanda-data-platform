@@ -11,9 +11,9 @@ const {createAdminPasswordHash}=require('../deploy/tunnel-control/password-auth.
   await page.route('**/tunnel/api/state',async route=>{
    const response=await route.fetch(),state=await response.json();state.version=15;
    const relay={...state.relays[0],online:true,memory:13*1024*1024,uptime:67000,revision:15,certExpires:'2027-10-17T12:00:00Z',certNames:['control.chitanda.net','custom.chitanda.net']};
-   state.relays=[relay];state.nodes=[{...state.nodes[0],online:mode!=='offline',memory:11*1024*1024,uptime:70000,revision:mode==='pending'?14:15,links:{}}];
+   relay.ingress={domain:'observed-business.example',port:443};state.relays=[relay];state.nodes=[{...state.nodes[0],online:mode!=='offline',memory:11*1024*1024,uptime:70000,revision:mode==='pending'?14:15,links:{}}];
    const certificate={fingerprint:'a'.repeat(64),subject:'CN=Observed server',issuer:'CN=Node observed CA',dnsNames:['custom.chitanda.net'],notBefore:'2026-01-01T00:00:00Z',notAfter:'2027-10-17T12:00:00Z'};
-   const node=state.nodes[0],link={relayId:relay.id,transport:'h2',serverName:'custom.chitanda.net',connected:true};node.links[`${relay.id}|h2|custom.chitanda.net`]=link;
+   const node=state.nodes[0];node.ingress=mode==='unreported'?null:{domain:'domestic-business.example',port:443};const link={relayId:relay.id,transport:'h2',serverName:'custom.chitanda.net',connected:true};node.links[`${relay.id}|h2|custom.chitanda.net`]=link;
    state.routes=[{id:'fixture-forward',source:node.id,target:relay.id,relayId:relay.id,serverName:'custom.chitanda.net',transport:'h2',enabled:mode!=='unassigned',sourceOnline:true,targetOnline:true,relayOnline:true}];
    const observedAt=new Date().toISOString();relay.tls={schema:1,collectedAt:observedAt,entries:[{side:'server',usage:'channel',relayId:relay.id,active:true,minimumVersion:'TLS 1.3',certificate}]};
    node.tls={schema:1,collectedAt:observedAt,entries:[{side:'client',usage:'channel',relayId:relay.id,transport:'h2',serverName:'custom.chitanda.net',active:true,verified:true,version:'TLS 1.3',alpn:'h2',cipher:'TLS_AES_128_GCM_SHA256',observedAt,certificate}]};
@@ -33,21 +33,17 @@ const {createAdminPasswordHash}=require('../deploy/tunnel-control/password-auth.
   const agent=page.locator('[data-node-card=mainland]'),relay=page.locator('[data-node-card=relay-hk]');
   for(const width of [1440,1024,390]){
    await page.setViewportSize({width,height:1050});await page.evaluate(()=>refresh());
-   check(await agent.locator('[data-node-field=sni]').innerText().then(s=>s.includes('custom.chitanda.net')),'agent shows the route SNI, not relay default');
-   check((await agent.locator('[data-node-field=tls]').innerText()).includes('最近握手验证通过'),'current online link verified');
-   check((await agent.locator('[data-node-field=certificate]').innerText()).includes('2027/10/17'),'agent shows peer certificate expiry');
-   check((await agent.innerText()).includes('对端证书')&&(await relay.innerText()).includes('本节点证书到期'),'certificate ownership is explicit');
+   check(await agent.locator('[data-node-field=ingress]').innerText().then(s=>s.includes('https://domestic-business.example')),'domestic business entry is derived from node configuration');
+   check(await relay.locator('[data-node-field=ingress]').innerText().then(s=>s.includes('https://observed-business.example')),'relay business entry is derived from configuration');
+   check(await agent.locator('.node-tls,[data-node-field=sni],[data-node-field=tls]').count()===0,'node cards omit TLS and SNI details');
    check(JSON.stringify(await agent.locator('.node-metrics [data-node-field]').evaluateAll(xs=>xs.map(x=>x.dataset.nodeField)))===JSON.stringify(await relay.locator('.node-metrics [data-node-field]').evaluateAll(xs=>xs.map(x=>x.dataset.nodeField))),'same metrics and ordering');
    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'no horizontal overflow');
    if(width>=1024){const a=await agent.locator('.node-card-footer').boundingBox(),b=await relay.locator('.node-card-footer').boundingBox();check(Math.abs(a.y-b.y)<1,'card actions align');}
    const output=path.resolve('tmp/node-cards-qa');fs.mkdirSync(output,{recursive:true});await page.screenshot({path:path.join(output,`nodes-${width}.png`),fullPage:true});
   }
-  mode='offline';await page.evaluate(()=>refresh());check((await agent.locator('[data-node-field=tls]').innerText()).includes('节点离线 · 保留上次采样'),'offline cached links are not reported verified');
-  mode='pending';await page.evaluate(()=>refresh());check((await agent.locator('[data-node-field=tls]').innerText()).includes('配置同步中 · 采样待更新'),'stale revision is not reported verified');
-  mode='unreported';await page.evaluate(()=>refresh());check((await agent.innerText()).includes('待节点上报'),'old node shows no fabricated TLS metadata');check(await agent.locator('[data-node-field=certificate]').count()===0,'no certificate expiry is inferred from relay configuration');
-  mode='unassigned';await page.evaluate(()=>refresh());check((await agent.innerText()).includes('待节点上报'),'empty observations stay unreported');
-  mode='rotated';await page.evaluate(()=>refresh());check((await agent.locator('[data-node-field=certificate]').innerText()).includes('2030/2/3'),'renewed peer observation updates without changing UI or controller relay metadata');
-  mode='multiple';await page.evaluate(()=>refresh());check(await agent.locator('[data-node-field=sni] .node-tls-entry').count()===2,'multiple observed peers shown');check((await agent.innerText()).includes('alternate.chitanda.net')&&(await agent.innerText()).includes('2028/3/1'),'each observed peer retains its own SNI and expiry');check(await agent.locator('[data-node-field=tls]').filter({hasText:'最近握手验证通过'}).count()===2,'each active observed handshake is shown');
-  check(errors.length===0,'browser errors: '+errors.join(';'));console.log(`PASS ${count} node-card checks: shared rows, TLS ownership, route SNI, certificate expiry, offline/pending states and multiple peers.`);
+  mode='unreported';await page.evaluate(()=>refresh());check((await agent.locator('[data-node-field=ingress]').innerText()).includes('未配置'),'no fabricated business entry');
+  mode='multiple';await page.evaluate(()=>refresh());check(await page.locator('[data-node-card]').count()===3,'arbitrary added nodes automatically render');
+  await page.locator('nav [data-view=settings]').click();check((await page.locator('.certificate-observations').textContent()).includes('alternate.chitanda.net'),'certificate details are centralized in system settings');
+  check(errors.length===0,'browser errors: '+errors.join(';'));console.log(`PASS ${count} node-card checks: concise cards, discovered HTTPS entries, centralized certificate observations and multiple nodes.`);
  }finally{if(browser)await browser.close();if(child)await new Promise(resolve=>{child.once('exit',resolve);child.kill();});fs.rmSync(directory,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

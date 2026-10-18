@@ -96,6 +96,19 @@ test('management privileges, session source binding, CSRF, origin and scoped nod
  assert.equal((await(await request('/tunnel/api/state','GET',headers)).json()).routes.find(r=>r.id===testRoute.id).test.status,'running');
  await request('/transit-node/sync','POST',{'X-Node-ID':mainland.id,Authorization:'Bearer '+mainland.token,'Content-Type':'application/json'},{revision:live.version,routeChecks:[checkResult]});
  const completed=(await(await request('/tunnel/api/state','GET',headers)).json()).routes.find(r=>r.id===testRoute.id).test;assert.equal(completed.status,'success');assert.equal(completed.latency.average,4);
+ const privateState=JSON.parse(fs.readFileSync(path.join(dir,'state.json'),'utf8')),pair=privateState.relays[0];
+ const certPayload={purpose:'channel',mode:'custom',certPEM:pair.certPEM,keyPEM:pair.keyPEM};
+ assert.equal((await request('/tunnel/api/certificates','PUT',{Cookie:headers.Cookie,'Content-Type':'application/json'},certPayload)).status,403);
+ assert.equal((await request('/tunnel/api/certificates','PUT',headers,{...certPayload,keyPEM:'bad'})).status,400);
+ assert.equal((await request('/tunnel/api/certificates','PUT',headers,certPayload)).status,200);
+ const publicSettings=JSON.stringify(await(await request('/tunnel/api/settings','GET',headers)).json());assert.ok(!publicSettings.includes('PRIVATE KEY')&&!publicSettings.includes('certPEM')&&!publicSettings.includes('keyPEM'));
+ const incompatible=await request('/tunnel/api/routes','POST',headers,{name:'Uncovered SNI',source:'mainland',target:'international',relayId:'relay-hk',listenPort:15301,targetPort:5081,serverName:'not-in-cert.example'});assert.equal(incompatible.status,400);
+ const streamRoute=await request('/tunnel/api/routes','POST',headers,{name:'Native Stream',source:'mainland',target:'international',relayId:'relay-hk',listenPort:15301,targetPort:5081,transport:'stream',serverName:'ignored.invalid'});assert.equal(streamRoute.status,201);assert.equal((await streamRoute.json()).route.serverName,'');
+ await request('/transit-node/sync','POST',{'X-Node-ID':mainland.id,Authorization:'Bearer '+mainland.token,'Content-Type':'application/json'},{ingress:{domain:'control.chitanda.net',port:443}});
+ const httpsPayload={...certPayload,purpose:'https',nodeIds:['mainland']};assert.equal((await request('/tunnel/api/certificates','PUT',headers,httpsPayload)).status,200);
+ assert.ok((await(await sync(mainland)).json()).httpsCertificate.keyPEM.includes('PRIVATE KEY'));assert.equal((await(await sync(international)).json()).httpsCertificate,null);assert.equal((await(await sync(relay)).json()).httpsCertificate,null);
+ assert.equal((await request('/tunnel/api/certificates','PUT',headers,{purpose:'https',mode:'auto'})).status,200);assert.equal((await(await sync(mainland)).json()).httpsCertificate,null);
+ assert.equal((await request('/tunnel/api/certificates','PUT',headers,{purpose:'channel',mode:'auto'})).status,200);
  const security=await(await request('/tunnel/api/security','GET',headers)).json();assert.equal(security.policy.failureLimit,5);assert.ok(security.events.every(e=>!('password' in e)&&!('username' in e)));
  const credentials={username:'another-name',password:'invalid'};assert.equal((await request('/tunnel/api/login','POST',{'Content-Type':'application/json'},credentials)).status,401);const blocked=await request('/tunnel/api/login','POST',{'Content-Type':'application/json'},credentials);assert.equal(blocked.status,429);assert.equal(blocked.headers.get('retry-after'),'2');assert.equal((await request('/tunnel/api/login','POST',{'Content-Type':'application/json'},{username:'boundary-admin',password})).status,429);
  }finally{await new Promise(resolve=>{child.once('exit',resolve);child.kill();});fs.rmSync(dir,{recursive:true,force:true});}

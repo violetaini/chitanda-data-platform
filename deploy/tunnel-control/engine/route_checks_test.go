@@ -114,7 +114,7 @@ func exerciseRealRouteChecks(t *testing.T, broker *Engine, cli *client.Client, a
 	}
 	defer sourceListener.Close()
 	route.ListenPort = sourceListener.Addr().(*net.TCPAddr).Port
-	targetClient, err := client.New(client.Config{Server: address, ServerName: sni, Path: "/api/v1/transit-test", PSK: psk, TCPTransport: protocol, TCPPoolSize: 1, UDPPoolSize: 1})
+	targetClient, err := client.New(client.Config{Server: address, ServerID: "diagnostic-relay", ServerName: sni, Path: "/api/v1/transit-test", PSK: psk, TCPTransport: protocol, TCPPoolSize: 1, UDPPoolSize: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

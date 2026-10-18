@@ -5,7 +5,7 @@ const fillIcons=(root=document)=>root.querySelectorAll('[data-icon]').forEach(e=
 const displayCopy=s=>String(s).replace(/传输/g,'数据').replace(/连接/g,'服务状态').replace(/隧道/g,'数据通道').replace(/优化中转/g,'优化节点');
 const $=s=>document.querySelector(s),esc=s=>displayCopy(String(s??'')).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let csrf='',data=null,view='overview',refreshing=false,toastTimer;
-const views={settings:['系统设置','SYSTEM SETTINGS','管理测活策略与系统偏好。'],account:['个人设置','YOUR PROFILE','管理你的头像、用户名与登录密码。'],overview:['中台概览','PLATFORM OVERVIEW','每一条线路，清晰可见。'],nodes:['节点管理','YOUR ENDPOINTS','统一查看接入状态与节点资源。'],tunnels:['数据通道','TUNNELS & ROUTES','统一编排节点与数据通道。'],activity:['操作记录','WORKSPACE ACTIVITY','查看配置变更与节点接入记录。'],guide:['使用指南','QUICK START','从节点登记到配置管理，清晰有序。']};
+const views={settings:['系统设置','SYSTEM SETTINGS','管理测活策略、证书与系统偏好。'],account:['个人设置','YOUR PROFILE','管理你的头像、用户名与登录密码。'],overview:['中台概览','PLATFORM OVERVIEW','每一条线路，清晰可见。'],nodes:['节点管理','YOUR ENDPOINTS','统一查看接入状态与节点资源。'],tunnels:['数据通道','TUNNELS & ROUTES','统一编排节点与数据通道。'],activity:['操作记录','WORKSPACE ACTIVITY','查看配置变更与节点接入记录。'],guide:['使用指南','QUICK START','从节点登记到配置管理，清晰有序。']};
 const bytes=n=>{n=Number(n)||0;for(const u of ['B','KB','MB','GB','TB']){if(n<1024||u==='TB')return `${n<10?n.toFixed(1):Math.round(n)} ${u}`;n/=1024;}};
 const uptime=n=>{n=Number(n)||0;return n>=86400?`${Math.floor(n/86400)} 天 ${Math.floor(n%86400/3600)} 小时`:n>=3600?`${Math.floor(n/3600)} 小时 ${Math.floor(n%3600/60)} 分钟`:`${Math.floor(n/60)} 分钟`;};
 const time=(t,full=false)=>new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',...(full?{month:'2-digit',day:'2-digit'}:{}),hour:'2-digit',minute:'2-digit',second:full?'2-digit':undefined,hour12:false}).format(new Date(t));

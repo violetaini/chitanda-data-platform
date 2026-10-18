@@ -204,6 +204,10 @@ func (e *Engine) dataGatewayHandler(fallback http.Handler) (http.Handler, *tls.C
 		return nil, nil, errors.New("invalid public gateway configuration")
 	}
 	certificate, err := tls.LoadX509KeyPair(cfg.Certificate, cfg.Key)
+	if current := e.publicCert.Load(); current != nil {
+		certificate = *current
+		err = nil
+	}
 	if err != nil {
 		return nil, nil, err
 	}

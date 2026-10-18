@@ -1,6 +1,6 @@
 # Chitanda 数据中台管理
 
-独立控制面板、轻量 Go 节点和 HTTPS 业务接入组件。此私有仓库从 Chitanda 项目中提取当前实现，保留 UI、动态图表、自动拓扑、账号与头像管理、多优化节点、H2 / H3 配置、访问控制及回归测试。
+独立控制面板、轻量 Go 节点和 HTTPS 业务接入组件。此私有仓库从 Chitanda 项目中提取当前实现，保留 UI、动态图表、自动拓扑、账号与头像管理、多优化节点、H2 / H3 / Stream 配置与统一证书管理、访问控制及回归测试。
 
 ## 目录
 
@@ -66,3 +66,5 @@ npm run build:engine
 本仓库不存放生产密码、哈希、节点令牌、证书私钥、SSH 身份、数据库或运行配置；`.env.example` 仅提供空白模板。也不包含 Chitanda 主站源码、其他已迁业务和历史备份。
 
 节点依赖 Chitanda 上游，固定提交的许可证副本见 `third_party/chitanda-LICENSE`；依赖及品牌资源保留各自权利，不因本仓库建立而另行开放授权。详见 [第三方说明](THIRD_PARTY_NOTICES.md)。
+
+节点与证书、Stream 的部署和维护说明见 [统一证书与原生 Stream](docs/certificates-stream.md)。
