@@ -65,7 +65,7 @@ function validateRoute(input,id){
  return {id:id||crypto.randomUUID(),name,source:source.id,target:target.id,relayId:relay.id,transport,serverName:domain(input.serverName||relay.serverName),tlsVerify:true,listenPort,targetPort,enabled:input.enabled!==false,createdAt:new Date().toISOString()};
 }
 function mutateRoute(input,id){const candidate=validateRoute(input,id),old=state.routes,index=old.findIndex(r=>r.id===id);state.routes=index>=0?old.map((r,i)=>i===index?{...candidate,createdAt:r.createdAt}:r):[...old,candidate];try{ensureCertificate(state.relays.find(r=>r.id===candidate.relayId));}catch(e){state.routes=old;throw e;}return candidate;}
-function enrollment(n,relay){audit('获取接入配置',n.name);return {controller:process.env.CT_CONTROLLER_URL||'https://control.chitanda.net',controllerAddress:'110.42.32.161:443',id:n.id,token:n.token,role:relay?'relay':'agent',ca:state.ca};}
+function enrollment(n,relay){audit('获取接入配置',n.name);return {controller:process.env.CT_CONTROLLER_URL||'https://datahub.chitanda.net',controllerAddress:'110.42.32.161:443',id:n.id,token:n.token,role:relay?'relay':'agent',ca:state.ca};}
 const server=http.createServer(async(req,res)=>{try{
  for(const [k,v]of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"}))res.setHeader(k,v);
  const p=new URL(req.url,'http://localhost').pathname,clientIP=String(req.headers['x-real-ip']||req.socket.remoteAddress||'').replace(/^::ffff:/,'');

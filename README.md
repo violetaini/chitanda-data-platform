@@ -55,6 +55,8 @@ npm run build:engine
 
 ## 生产部署
 
+当前独立入口为 `https://datahub.chitanda.net/`，国内宝塔继续使用 `control.chitanda.net`。DNS / CDN 回源、来源校验、证书续期及迁移维护见 [独立域名](docs/datahub-domain.md)。
+
 管理服务仅监听回环，Nginx 和应用必须同时保持精确来源白名单；反向入口必须覆盖客户端提供的来源头。线上启用 HTTPS，取消 `CT_INSECURE=1`。节点仅使用其独立登记凭据，不能获得管理员凭据或工作区 CA 私钥。
 
 仓库包含服务及 Nginx 模板，未包含一键生产安装器。部署前配置低权限服务账号、私有状态目录、真实域名和合法来源；不要将原部署历史中的一次性迁移步骤直接重放。
