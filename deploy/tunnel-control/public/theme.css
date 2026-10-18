@@ -148,6 +148,12 @@ body,body *{font-family:var(--font)!important}
 .node-tls-details .relay-detail strong{max-width:65%;overflow-wrap:anywhere;text-align:right}
 .route-test-button{padding:7px 12px;font-size:11px;white-space:nowrap;min-height:32px}
 .route-test-button svg{width:14px;height:14px}
+.route-state{display:inline-flex;align-items:center;justify-content:center;flex:0 0 28px;width:28px;height:32px;--route-state-color:#bc6873}
+.route-state.is-ready{--route-state-color:#628c72}
+.route-state-dot{position:relative;display:block;width:9px;height:9px;border-radius:50%;background:var(--route-state-color);box-shadow:0 0 5px color-mix(in srgb,var(--route-state-color) 20%,transparent)}
+.route-state-dot::before{content:"";position:absolute;inset:-4px;border-radius:50%;background:var(--route-state-color);opacity:.15;animation:route-state-breathe 2.6s ease-in-out infinite;pointer-events:none}
+@keyframes route-state-breathe{0%,100%{transform:scale(.7);opacity:.08}50%{transform:scale(1.2);opacity:.22}}
+@media(prefers-reduced-motion:reduce){.route-state-dot::before{animation:none;transform:scale(.9);opacity:.12}}
 .route-test-result{border:1px solid var(--border);border-radius:12px;padding:13px 15px;margin-top:17px;background:#f7f2f740;color:#786980;font-size:11px}
 .route-test-result.empty{color:#8b7c92}
 .route-test-summary{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
