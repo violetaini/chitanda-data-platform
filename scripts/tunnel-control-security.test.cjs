@@ -40,7 +40,7 @@ test('management privileges, session source binding, CSRF, origin and scoped nod
  const child=spawn(process.execPath,['deploy/tunnel-control/server.cjs'],{cwd:path.resolve(__dirname,'..'),windowsHide:true,stdio:'ignore',env:{...process.env,CT_PORT:'5097',CT_DATA:dir,CT_USERNAME:'boundary-admin',CT_PASSWORD_HASH:await createAdminPasswordHash(password),CT_INSECURE:'1',CT_OPENSSL:process.platform==='win32'?'C:/Program Files/Git/usr/bin/openssl.exe':'openssl'}});
  try{for(let i=0;i<80;i++){try{if((await fetch(base+'/health')).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
  const request=(endpoint,method='GET',headers={},value)=>fetch(base+endpoint,{method,headers,...(value===undefined?{}:{body:JSON.stringify(value)})});
- for(const endpoint of ['/tunnel/api/state','/tunnel/api/enrollment','/tunnel/api/security','/tunnel/api/profile','/tunnel/api/account'])assert.equal((await request(endpoint)).status,401);
+ for(const endpoint of ['/tunnel/api/state','/tunnel/api/enrollment','/tunnel/api/security','/tunnel/api/profile','/tunnel/api/account','/tunnel/api/settings'])assert.equal((await request(endpoint)).status,401);
  const login=await request('/tunnel/api/login','POST',{'Content-Type':'application/json'},{username:'boundary-admin',password});assert.equal(login.status,200);const cookie=login.headers.get('set-cookie'),value=await login.json(),headers={Cookie:cookie.split(';')[0],'X-CSRF-Token':value.csrf,'Content-Type':'application/json'};
  assert.match(cookie,/HttpOnly/);assert.match(cookie,/SameSite=Strict/);
  assert.equal((await request('/tunnel/api/state','GET',{...headers,'X-Real-IP':'123.119.187.76'})).status,401);
@@ -49,6 +49,15 @@ test('management privileges, session source binding, CSRF, origin and scoped nod
  assert.equal((await request('/tunnel/api/login','POST',{'Content-Type':'application/json','Sec-Fetch-Site':'cross-site'},{username:'boundary-admin',password})).status,403);
  assert.equal((await request('/tunnel/api/login','POST',{},{})).status,415);
  for(const endpoint of ['/tunnel/','/tunnel/graph-model.js','/tunnel/dashboard.js','/tunnel/security.js','/tunnel/api/security'])assert.equal((await request(endpoint,'GET',{'X-Real-IP':'8.8.8.8','X-Forwarded-For':'123.119.187.76'})).status,403);
+ const beforeSettings=(await(await request('/tunnel/api/state','GET',headers)).json()).version;
+ assert.equal((await request('/tunnel/api/settings','PATCH',{Cookie:headers.Cookie,'Content-Type':'application/json'},{routeChecks:{enabled:false}})).status,403);
+ assert.equal((await request('/tunnel/api/settings','PATCH',{...headers,Origin:'https://untrusted.example'},{routeChecks:{enabled:false}})).status,403);
+ assert.equal((await request('/tunnel/api/settings','GET',{...headers,'X-Real-IP':'8.8.8.8'})).status,403);
+ assert.equal((await request('/tunnel/api/settings','PATCH',headers,{allowedIPs:['0.0.0.0']})).status,400);
+ assert.equal((await request('/tunnel/api/settings','PATCH',headers,{routeChecks:{intervalSeconds:3600}})).status,400);
+ assert.equal((await request('/tunnel/api/settings','PATCH',headers,{routeChecks:{enabled:false}})).status,200);
+ assert.equal((await(await request('/tunnel/api/settings','GET',headers)).json()).routeChecks.enabled,false);
+ assert.equal((await(await request('/tunnel/api/state','GET',headers)).json()).version,beforeSettings);
  await request('/tunnel/api/routes','POST',headers,{name:'Scope test',source:'mainland',target:'international',listenPort:15081,targetPort:5081});
  const telemetryCertificate={fingerprint:'a'.repeat(64),subject:'CN=Observed',issuer:'CN=CA',dnsNames:['control.chitanda.net'],notBefore:'2026-01-01T00:00:00Z',notAfter:'2027-12-31T00:00:00Z',keyPEM:'PRIVATE-CERTIFICATE-MUST-NOT-PASS'};
  const newNode=await(await request('/tunnel/api/nodes','POST',headers,{name:'Unassigned'})).json();

@@ -19,6 +19,8 @@ state.json
 account.json
 login-defense.json
 runtime.json
+route-checks.json
+route-checks.json.tmp
 config.json
 pki/
 .DS_Store
