@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -69,7 +70,9 @@ func TestRealH2H3AndSNICertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}
+	var served atomic.Pointer[tls.Certificate]
+	served.Store(&certificate)
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return served.Load(), nil }}
 	h2 := &http.Server{Handler: app, TLSConfig: tlsConfig.Clone()}
 	go h2.ServeTLS(ln, "", "")
 	defer h2.Close()
@@ -86,7 +89,20 @@ func TestRealH2H3AndSNICertificate(t *testing.T) {
 				e.mu.Lock()
 				e.cfg.Routes = []Route{{ID: "test-route", Source: "mainland", Target: "international", Enabled: true, Transport: protocol, ServerName: sni}}
 				e.mu.Unlock()
-				cli, err := client.New(client.Config{Server: ln.Addr().String(), ServerName: sni, Path: "/api/v1/transit-test", PSK: psk, TCPTransport: protocol, TCPPoolSize: 1, UDPPoolSize: 1, QUICInitialPacketSize: 1252})
+				observed := make(chan TLSInfo, 4)
+				link := &Link{relay: Relay{ID: "test-peer"}, transport: protocol, serverName: sni}
+				cli, err := client.New(client.Config{Server: ln.Addr().String(), ServerName: sni, Path: "/api/v1/transit-test", PSK: psk, TCPTransport: protocol, TCPPoolSize: 1, UDPPoolSize: 1, QUICInitialPacketSize: 1252, TLSObserver: func(cs tls.ConnectionState) {
+					link.observeTLS(cs)
+					link.mu.RLock()
+					info := link.tlsObservation
+					link.mu.RUnlock()
+					if info != nil {
+						select {
+						case observed <- *info:
+						default:
+						}
+					}
+				}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -101,6 +117,14 @@ func TestRealH2H3AndSNICertificate(t *testing.T) {
 				good.Close()
 				if err != nil || !acknowledged.OK {
 					t.Fatal("scoped broker credential rejected", err)
+				}
+				select {
+				case info := <-observed:
+					if !info.Verified || info.ServerName != sni || info.ALPN != protocol || info.Version != tls.VersionName(tls.VersionTLS13) || info.Certificate.Fingerprint != publicCertificate(certificate.Leaf).Fingerprint {
+						t.Fatal("handshake observation mismatch", info)
+					}
+				case <-time.After(3 * time.Second):
+					t.Fatal("real TLS handshake was not observed")
 				}
 				bad, err := probe.dial(cli, Hello{Kind: "ping", Token: strings.Repeat("c", 64), Transport: protocol, ServerName: sni})
 				if err != nil {
@@ -173,7 +197,52 @@ func TestRealH2H3AndSNICertificate(t *testing.T) {
 			})
 		}
 	}
-	bad, err := client.New(client.Config{Server: ln.Addr().String(), ServerName: "wrong.chitanda.net", Path: "/api/v1/transit-test", PSK: psk, TCPTransport: "h2", TCPPoolSize: 1})
+
+	leafTemplate.SerialNumber = big.NewInt(3)
+	leafTemplate.NotAfter = time.Now().Add(2 * time.Hour)
+	renewedDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, ca, &leafKey.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := tls.X509KeyPair(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: renewedDER}), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: leafPrivate}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	served.Store(&renewed)
+	for _, protocol := range []string{"h2", "h3"} {
+		observed := make(chan tls.ConnectionState, 4)
+		cli, err := client.New(client.Config{Server: ln.Addr().String(), ServerName: "custom.chitanda.net", Path: "/api/v1/transit-test", PSK: psk, TCPTransport: protocol, TCPPoolSize: 1, UDPPoolSize: 1, TLSObserver: func(cs tls.ConnectionState) {
+			select {
+			case observed <- cs:
+			default:
+			}
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		probe := &Engine{cfg: Config{ID: "mainland"}}
+		c, err := probe.dial(cli, Hello{Kind: "ping", Token: strings.Repeat("a", 64), Transport: protocol, ServerName: "custom.chitanda.net"})
+		if err != nil {
+			cli.Close()
+			t.Fatal(err)
+		}
+		_, err = receive(c)
+		c.Close()
+		cli.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case cs := <-observed:
+			if publicCertificate(cs.PeerCertificates[0]).Fingerprint != publicCertificate(renewed.Leaf).Fingerprint {
+				t.Fatal("renewed certificate observation was not refreshed")
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("renewal handshake was not observed")
+		}
+	}
+	var rejectedObservations atomic.Int64
+	bad, err := client.New(client.Config{Server: ln.Addr().String(), ServerName: "wrong.chitanda.net", TLSObserver: func(tls.ConnectionState) { rejectedObservations.Add(1) }, Path: "/api/v1/transit-test", PSK: psk, TCPTransport: "h2", TCPPoolSize: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,5 +252,8 @@ func TestRealH2H3AndSNICertificate(t *testing.T) {
 	if c, err := bad.DialContext(ctx, "tcp", "bridge.internal:1"); err == nil {
 		c.Close()
 		t.Fatal("incorrect SNI accepted")
+	}
+	if rejectedObservations.Load() != 0 {
+		t.Fatal("rejected SNI generated a successful TLS observation")
 	}
 }

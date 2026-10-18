@@ -1,5 +1,6 @@
 'use strict';
 const http=require('node:http'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),net=require('node:net'),{execFileSync}=require('node:child_process');
+const VERSION=require('./package.json').version,sanitizeTLS=require('./telemetry.cjs');
 const ROOT=__dirname,BASE='/tunnel',PORT=Number(process.env.CT_PORT||5092),DATA=process.env.CT_DATA||'/var/lib/chitanda-tunnel';
 const DEFAULT_SNI='control.chitanda.net',ALLOWED_IPS=new Set((process.env.CT_ALLOWED_IPS||'123.119.187.76,127.0.0.1,::1').split(',').map(s=>s.trim()));
 fs.mkdirSync(DATA,{recursive:true,mode:0o700});
@@ -36,12 +37,12 @@ if(state.schema!==2){state.schema=2;state.version++;}delete state.relay;
 for(const r of state.relays)ensureCertificate(r);save();
 const report=id=>{const r=reports.get(id);return r?{...r,online:Date.now()-r.seen<50000}:{online:false};};
 const linkKey=r=>[r.relayId,r.transport,r.serverName].join('|');
-function cleanNode(n,relay=false){return {id:n.id,name:n.name,host:n.host||'',role:relay?'优化节点':n.role,kind:relay?'relay':'agent',...(relay?{port:n.port,serverName:n.serverName,tlsVerify:true,certExpires:n.certExpires,certNames:n.certNames,protocols:['h2','h3']}:{}),...report(n.id)};}
+function cleanNode(n,relay=false){return {id:n.id,name:n.name,host:n.host||'',role:relay?'优化节点':n.role,kind:relay?'relay':'agent',...(relay?{port:n.port,serverName:n.serverName,tlsVerify:true,certExpires:n.certExpires,certNames:n.certNames,protocols:report(n.id).capabilities?.transports||[]}:{}),...report(n.id)};}
 function snapshot(){
  const relays=state.relays.map(n=>cleanNode(n,true)),nodes=state.nodes.map(n=>cleanNode(n));
  const routes=state.routes.map(r=>{const s=report(r.source),t=report(r.target),mid=report(r.relayId),key=linkKey(r),sl=s.links?.[key],tl=t.links?.[key],current=n=>Number(n.revision)>=state.version;return {...r,configPending:[s,t,mid].some(n=>n.online&&!current(n)),sourceOnline:!!(s.online&&current(s)&&s.listeners?.includes(r.id)&&(r.source===r.relayId||sl?.connected)),targetOnline:!!(t.online&&current(t)&&(r.target===r.relayId||tl?.connected)),relayOnline:!!(mid.online&&current(mid))};});
  const origins=(state.origins||[]).map(n=>({...n,kind:'origin'}));const topology={nodes:[{id:'@controller',kind:'control',name:'数据中台',host:'',online:true},...origins,...relays,...nodes],edges:[...origins.flatMap(n=>[{id:'https:'+n.id,source:n.id,target:n.endpoint,kind:'https',name:'HTTPS 业务接入',transport:'https',enabled:true},{id:'https-return:'+n.id,source:n.endpoint,target:n.id,kind:'https',name:'HTTPS 业务接入',transport:'https',enabled:true}]),...[...relays,...nodes].map(n=>({id:'config:'+n.id,source:'@controller',target:n.id,kind:'control'})),...routes.flatMap(r=>[{id:r.id+':source',source:r.source,target:r.relayId,routeId:r.id,name:r.name,transport:r.transport,enabled:r.enabled,ready:r.sourceOnline&&r.targetOnline&&r.relayOnline},{id:r.id+':target',source:r.relayId,target:r.target,routeId:r.id,name:r.name,transport:r.transport,enabled:r.enabled,ready:r.sourceOnline&&r.targetOnline&&r.relayOnline}])]};
- return {topology,origins,version:state.version,schema:2,now:new Date().toISOString(),defaultSNI:DEFAULT_SNI,relays,nodes,routes,events:state.events,histories:Object.fromEntries([...history].map(([id,s])=>[id,s.slice(-60)])),control:{version:'2.3.0',uptime:Math.floor(process.uptime()),memory:process.memoryUsage().rss}};
+ return {topology,origins,version:state.version,schema:2,now:new Date().toISOString(),defaultSNI:DEFAULT_SNI,relays,nodes,routes,events:state.events,histories:Object.fromEntries([...history].map(([id,s])=>[id,s.slice(-60)])),control:{version:VERSION,uptime:Math.floor(process.uptime()),memory:process.memoryUsage().rss}};
 }
 const brokerToken=(node,relay)=>crypto.createHmac('sha256',node.token).update('chitanda-broker-v1:'+relay.id).digest('hex');
 function agentConfig(id){
@@ -81,6 +82,8 @@ const server=http.createServer(async(req,res)=>{try{
   r.revision=Math.min(state.version,Math.floor(r.revision||0));r.version=String(data.version||'').slice(0,40);
   r.listeners=Array.isArray(data.listeners)?data.listeners.filter(id=>state.routes.some(v=>v.id===id&&v.source===item.id)).slice(0,128):[];
   r.links={};for(const route of state.routes.filter(v=>v.source===id||v.target===id)){const key=linkKey(route),link=data.links?.[key];if(link&&typeof link==='object')r.links[key]={relayId:route.relayId,transport:route.transport,connected:link.connected===true,latency:finite(link.latency),error:String(link.error||'').slice(0,240)};}
+  if(data.capabilities&&typeof data.capabilities==='object')r.capabilities={transports:Array.isArray(data.capabilities.transports)?[...new Set(data.capabilities.transports.filter(v=>['h2','h3'].includes(v)))]:[],tlsServer:data.capabilities.tlsServer===true,tlsClient:data.capabilities.tlsClient===true};
+  r.tls=sanitizeTLS(data.tls,item,state);
   reports.set(id,r);
   if(state.relays.some(n=>n.id===id)){const s=history.get(id)||[];s.push({at:Date.now(),rx:r.rx||0,tx:r.tx||0,uptime:r.uptime||0,active:r.active||0,memory:r.memory||0});if(s.length>120)s.shift();history.set(id,s);}
   return json(res,200,agentConfig(id));

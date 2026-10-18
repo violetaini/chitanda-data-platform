@@ -27,7 +27,7 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.3.0"
+const version = "2.4.0"
 
 type Route struct {
 	RelayID    string `json:"relayId"`
@@ -91,6 +91,9 @@ type Hello struct {
 type Engine struct {
 	links         map[string]*Link
 	cert          atomic.Pointer[tls.Certificate]
+	publicCert    atomic.Pointer[tls.Certificate]
+	serverTLS     atomic.Pointer[tls.Config]
+	transports    []string
 	connections   map[*slotConn]Hello
 	mu            sync.RWMutex
 	cfg           Config
@@ -165,7 +168,17 @@ func (e *Engine) report() map[string]any {
 		linkReports[key] = map[string]any{"relayId": l.relay.ID, "transport": l.transport, "serverName": l.serverName, "connected": l.connected, "latency": float64(l.latency) / 1e6, "error": l.lastError}
 		l.mu.RUnlock()
 	}
-	return map[string]any{"version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
+	protocols := append([]string{}, e.transports...)
+	if len(protocols) == 0 {
+		seen := map[string]bool{}
+		for _, l := range e.links {
+			if !seen[l.transport] {
+				seen[l.transport] = true
+				protocols = append(protocols, l.transport)
+			}
+		}
+	}
+	return map[string]any{"capabilities": map[string]any{"transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
 }
 func (e *Engine) syncConfig() error {
 	cfg := e.config()
@@ -521,6 +534,14 @@ func (e *Engine) runRelay() error {
 		}
 		return c, nil
 	}}
+	e.mu.Lock()
+	e.transports = []string{"h2", "h3"}
+	e.mu.Unlock()
+	e.serverTLS.Store(tlsConfig)
+	if publicCertificate != nil {
+		e.publicCert.Store(publicCertificate)
+	}
+
 	srv := &http.Server{Addr: cfg.Listen, Handler: app, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, TLSConfig: tlsConfig.Clone()}
 	h3 := server.NewHTTP3Server(app, tlsConfig.Clone(), 1252)
 	h3.Addr = cfg.Listen

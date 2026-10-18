@@ -50,10 +50,15 @@ test('management privileges, session source binding, CSRF, origin and scoped nod
  assert.equal((await request('/tunnel/api/login','POST',{},{})).status,415);
  for(const endpoint of ['/tunnel/','/tunnel/graph-model.js','/tunnel/dashboard.js','/tunnel/security.js','/tunnel/api/security'])assert.equal((await request(endpoint,'GET',{'X-Real-IP':'8.8.8.8','X-Forwarded-For':'123.119.187.76'})).status,403);
  await request('/tunnel/api/routes','POST',headers,{name:'Scope test',source:'mainland',target:'international',listenPort:15081,targetPort:5081});
+ const telemetryCertificate={fingerprint:'a'.repeat(64),subject:'CN=Observed',issuer:'CN=CA',dnsNames:['control.chitanda.net'],notBefore:'2026-01-01T00:00:00Z',notAfter:'2027-12-31T00:00:00Z',keyPEM:'PRIVATE-CERTIFICATE-MUST-NOT-PASS'};
  const newNode=await(await request('/tunnel/api/nodes','POST',headers,{name:'Unassigned'})).json();
  const enroll=async id=>(await(await request('/tunnel/api/enrollment','POST',headers,{id})).json());
  const mainland=await enroll('mainland'),international=await enroll('international'),relay=await enroll('relay-hk');
  const sync=async enrollment=>(await request('/transit-node/sync','POST',{'X-Node-ID':enrollment.id,Authorization:'Bearer '+enrollment.token,'Content-Type':'application/json'},{}));
+ const observation={side:'client',usage:'channel',relayId:'relay-hk',transport:'h2',serverName:'control.chitanda.net',active:true,verified:true,version:'TLS 1.3',alpn:'h2',observedAt:new Date().toISOString(),certificate:telemetryCertificate,token:'OBSERVATION-SECRET-MUST-NOT-PASS'};
+ await request('/transit-node/sync','POST',{'X-Node-ID':mainland.id,Authorization:'Bearer '+mainland.token,'Content-Type':'application/json'},{revision:2,tls:{schema:1,collectedAt:new Date().toISOString(),entries:[observation,{...observation,relayId:'unrelated-optimizer'},{...observation,side:'server'}]}});
+ const sampled=await(await request('/tunnel/api/state','GET',headers)).json(),reported=sampled.nodes.find(n=>n.id===mainland.id).tls;
+ assert.equal(reported.entries.length,1);assert.equal(reported.entries[0].certificate.notAfter,'2027-12-31T00:00:00.000Z');assert.equal(reported.entries[0].serverName,'control.chitanda.net');assert.ok(!JSON.stringify(reported).includes('MUST-NOT-PASS'));assert.ok(sampled.relays.find(n=>n.id==='relay-hk').tls==null);
  const relayConfig=await(await sync(relay)).json(),agentConfig=await(await sync(mainland)).json();assert.equal(relayConfig.nodes.length,2);assert.ok(!relayConfig.nodes.some(n=>n.id===newNode.node.id));
  assert.ok(relayConfig.nodes.every(n=>n.token!==mainland.token&&n.token!==international.token));const scoped=agentConfig.relays[0].brokerToken;assert.equal(scoped,relayConfig.nodes.find(n=>n.id==='mainland').token);
  assert.equal((await request('/transit-node/sync','POST',{'X-Node-ID':'mainland',Authorization:'Bearer '+scoped,'Content-Type':'application/json'},{})).status,401);

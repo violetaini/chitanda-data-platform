@@ -1,0 +1,156 @@
+diff --git a/pkg/client/client.go b/pkg/client/client.go
+index ea371d1..d13e400 100644
+--- a/pkg/client/client.go
++++ b/pkg/client/client.go
+@@ -6,6 +6,7 @@ package client
+ import (
+ 	"context"
+ 	"crypto/rand"
++	"crypto/tls"
+ 	"encoding/base64"
+ 	"errors"
+ 	"fmt"
+@@ -52,17 +53,19 @@ const (
+ 
+ // Config holds the client configuration.
+ type Config struct {
+-	Server                string // e.g. "170.9.59.149:11322"
+-	ServerName            string // e.g. "status.chitanda.org"
+-	PSK                   []byte // 32+ bytes PSK
+-	Path                  string // e.g. "/your-private-path"
+-	TCPTransport          string // "h2" (default), "auto", "h3", or "h1" (alias: "plain-h1")
+-	TCPPoolSize           int    // Number of independent physical TCP carriers (H2 or H3, default 4)
+-	UDPPoolSize           int    // Number of independent physical UDP carriers (H3, default TCPPoolSize or 4)
+-	SessionCacheFile      string // optional persistent session cache path
+-	QUICInitialPacketSize uint16 // 1200 - 1452, default 1452
+-	InsecureSkipVerify    bool   // skip TLS certificate verification
+-	ServerID              string // optional target server ID for RawStream cross-node replay protection
++	// TLSObserver observes normal, fully verified transport handshakes.
++	TLSObserver           func(tls.ConnectionState) `json:"-"`
++	Server                string                    // e.g. "170.9.59.149:11322"
++	ServerName            string                    // e.g. "status.chitanda.org"
++	PSK                   []byte                    // 32+ bytes PSK
++	Path                  string                    // e.g. "/your-private-path"
++	TCPTransport          string                    // "h2" (default), "auto", "h3", or "h1" (alias: "plain-h1")
++	TCPPoolSize           int                       // Number of independent physical TCP carriers (H2 or H3, default 4)
++	UDPPoolSize           int                       // Number of independent physical UDP carriers (H3, default TCPPoolSize or 4)
++	SessionCacheFile      string                    // optional persistent session cache path
++	QUICInitialPacketSize uint16                    // 1200 - 1452, default 1452
++	InsecureSkipVerify    bool                      // skip TLS certificate verification
++	ServerID              string                    // optional target server ID for RawStream cross-node replay protection
+ 	DialContext           func(ctx context.Context, network, addr string) (net.Conn, error)
+ 	ListenPacket          func(ctx context.Context, network, addr string) (net.PacketConn, error)
+ 	// DialPacket optionally opens a packet socket to the resolved tunnel peer.
+@@ -204,7 +207,7 @@ func New(cfg Config) (*Client, error) {
+ 			h2Count = 0
+ 		}
+ 		for i := 0; i < h2Count; i++ {
+-			h2Cli, err := newH2TransportClient(cfg.Server, cfg.ServerName, rootURL, requestURL, cfg.Path, cfg.PSK, cfg.InsecureSkipVerify, cfg.DialContext)
++			h2Cli, err := newH2TransportClient(cfg.Server, cfg.ServerName, rootURL, requestURL, cfg.Path, cfg.PSK, cfg.InsecureSkipVerify, cfg.DialContext, cfg.TLSObserver)
+ 			if err != nil {
+ 				return nil, fmt.Errorf("init h2 client %d: %w", i, err)
+ 			}
+@@ -220,7 +223,7 @@ func New(cfg Config) (*Client, error) {
+ 		for i := 0; i < h3Count; i++ {
+ 			h3Managers = append(h3Managers, newH3TransportManager(
+ 				cfg.Server, cfg.ServerName, rootURL, requestURL, cfg.Path, cfg.PSK, cache, cfg.QUICInitialPacketSize, cfg.InsecureSkipVerify, cfg.ListenPacket, cfg.ResolveUDP, cfg.DialPacket,
+-			))
++			).observeTLS(cfg.TLSObserver))
+ 		}
+ 	}
+ 
+diff --git a/pkg/client/conn_tcp.go b/pkg/client/conn_tcp.go
+index 95905ec..601cb8a 100644
+--- a/pkg/client/conn_tcp.go
++++ b/pkg/client/conn_tcp.go
+@@ -37,7 +37,7 @@ type h2TransportClient struct {
+ 	idleSince     time.Time
+ }
+ 
+-func newH2TransportClient(server, serverName, rootURL, requestURL, path string, psk []byte, insecureSkipVerify bool, dialRaw func(ctx context.Context, network, addr string) (net.Conn, error)) (*h2TransportClient, error) {
++func newH2TransportClient(server, serverName, rootURL, requestURL, path string, psk []byte, insecureSkipVerify bool, dialRaw func(ctx context.Context, network, addr string) (net.Conn, error), observers ...func(tls.ConnectionState)) (*h2TransportClient, error) {
+ 	tlsCfg := &tls.Config{
+ 		MinVersion:         tls.VersionTLS13,
+ 		ServerName:         serverName,
+@@ -73,6 +73,10 @@ func newH2TransportClient(server, serverName, rootURL, requestURL, path string,
+ 			return nil, err
+ 		}
+ 
++		if len(observers) > 0 && observers[0] != nil {
++			observers[0](tlsConn.ConnectionState())
++		}
++
+ 		return tlsConn, nil
+ 	}
+ 
+diff --git a/pkg/client/conn_udp.go b/pkg/client/conn_udp.go
+index 10575ae..60d393e 100644
+--- a/pkg/client/conn_udp.go
++++ b/pkg/client/conn_udp.go
+@@ -29,6 +29,7 @@ type h3Connection struct {
+ }
+ 
+ type h3TransportManager struct {
++	tlsObserver   func(tls.ConnectionState)
+ 	mu            sync.Mutex
+ 	closed        bool
+ 	lifetime      context.Context
+@@ -239,6 +240,20 @@ func (m *h3TransportManager) dialConnection(ctx context.Context) (*h3Connection,
+ 		_ = pconn.Close()
+ 		return nil, err
+ 	}
++	if m.tlsObserver != nil {
++		observer := m.tlsObserver
++		go func() {
++			select {
++			case <-quicConn.HandshakeComplete():
++				if quicConn.Context().Err() == nil {
++					observer(quicConn.ConnectionState().TLS)
++				}
++			case <-quicConn.Context().Done():
++			case <-ctx.Done():
++			}
++		}()
++	}
++
+ 	return &h3Connection{quic: quicConn, pconn: pconn}, nil
+ }
+ 
+diff --git a/pkg/client/scaler.go b/pkg/client/scaler.go
+index b818418..76d4a4e 100644
+--- a/pkg/client/scaler.go
++++ b/pkg/client/scaler.go
+@@ -157,7 +157,7 @@ func (c *Client) AddCarrier(ctx context.Context, transport string) error {
+ 		}
+ 		c.carrierMu.RUnlock()
+ 
+-		h2Cli, err := newH2TransportClient(c.cfg.Server, c.cfg.ServerName, c.rootURL, c.requestURL, c.cfg.Path, c.cfg.PSK, c.cfg.InsecureSkipVerify, c.cfg.DialContext)
++		h2Cli, err := newH2TransportClient(c.cfg.Server, c.cfg.ServerName, c.rootURL, c.requestURL, c.cfg.Path, c.cfg.PSK, c.cfg.InsecureSkipVerify, c.cfg.DialContext, c.cfg.TLSObserver)
+ 		if err != nil {
+ 			return fmt.Errorf("create h2 carrier: %w", err)
+ 		}
+@@ -207,7 +207,7 @@ func (c *Client) AddCarrier(ctx context.Context, transport string) error {
+ 
+ 		mgr := newH3TransportManager(
+ 			c.cfg.Server, c.cfg.ServerName, c.rootURL, c.requestURL, c.cfg.Path, c.cfg.PSK, c.sessionCache, c.cfg.QUICInitialPacketSize, c.cfg.InsecureSkipVerify, c.cfg.ListenPacket, c.cfg.ResolveUDP, c.cfg.DialPacket,
+-		)
++		).observeTLS(c.cfg.TLSObserver)
+ 
+ 		// Verify physical connectivity and context cancellation
+ 		probeCtx, cancelProbe := context.WithTimeout(ctx, 3*time.Second)
+diff --git a/pkg/client/tls_observer.go b/pkg/client/tls_observer.go
+new file mode 100644
+index 0000000..d0cf50e
+--- /dev/null
++++ b/pkg/client/tls_observer.go
+@@ -0,0 +1,10 @@
++package client
++
++import "crypto/tls"
++
++// Install the observer before first use. It receives only completed carrier
++// handshakes; certificate validation and TLS configuration remain unchanged.
++func (m *h3TransportManager) observeTLS(observer func(tls.ConnectionState)) *h3TransportManager {
++	m.tlsObserver = observer
++	return m
++}

@@ -4,16 +4,17 @@
 
 控制端登记节点、管理线路、生成拓扑并签发工作区证书；控制端与业务源站可同机，但无需承担跨境节点工作。业务源站以普通 HTTPS 接入附近的数据节点，国内数据节点与境外优化节点之间使用 Chitanda H2 / TLS 1.3，H3 为可选配置，具体线路需实际验证。境外优化节点再通过 HTTPS 请求固定业务源站；反方向复用既定线路。
 
-优化节点使用单 Go 进程，无需面板、Node.js、数据库或 Docker。多个优化节点可独立登记、选用；当前实现不自动进行线路故障切换。引擎与面板报告版本为 2.3.0，面板子包的原依赖清单版本保留为 2.2.0。
+优化节点使用单 Go 进程，无需面板、Node.js、数据库或 Docker。多个优化节点可独立登记、选用；当前实现不自动进行线路故障切换。引擎与面板当前为 2.4.0，面板从运行目录 package.json 获取自身版本；TLS 与协议能力通过节点鉴权心跳自动更新，见 [采集与维护](node-telemetry.md)。
 
 ## 构建 Go 节点
 
-节点 `engine/` 是加入上游模块的 `package main`，不能直接在该目录 `go build`。Windows 可使用仓库脚本；其他平台可按以下步骤在独立工作目录构建：
+节点 `engine/` 是加入上游模块的 `package main`，不能直接在该目录 `go build`。Windows 可使用 PowerShell 构建脚本；Linux 使用 `bash deploy/tunnel-control/build-engine.sh`（ARM64 可加 `GOARCH=arm64`）。两个入口都会校验固定上游并自动应用受检视的 TLS 观察补丁。手动构建时也必须先应用补丁：
 
 ```sh
 mkdir -p tmp
 git clone https://github.com/chitanda-project/chitanda.git tmp/chitanda-tunnel-core
 git -C tmp/chitanda-tunnel-core checkout 2926cf2c41c85d2177536a4ba2d9931f1ec675f9
+git -C tmp/chitanda-tunnel-core apply "$(pwd)/patches/chitanda-tls-observer.patch"
 mkdir -p tmp/chitanda-tunnel-core/cmd/chitanda-transit
 cp deploy/tunnel-control/engine/*.go tmp/chitanda-tunnel-core/cmd/chitanda-transit/
 cd tmp/chitanda-tunnel-core

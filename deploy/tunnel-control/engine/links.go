@@ -13,17 +13,18 @@ import (
 )
 
 type Link struct {
-	mu         sync.RWMutex
-	relay      Relay
-	transport  string
-	serverName string
-	signature  string
-	client     *client.Client
-	ctx        context.Context
-	cancel     context.CancelFunc
-	connected  bool
-	latency    int64
-	lastError  string
+	mu             sync.RWMutex
+	relay          Relay
+	transport      string
+	serverName     string
+	signature      string
+	client         *client.Client
+	ctx            context.Context
+	cancel         context.CancelFunc
+	connected      bool
+	latency        int64
+	lastError      string
+	tlsObservation *TLSInfo
 }
 
 func routeKey(r Route) string { return r.RelayID + "|" + r.Transport + "|" + r.ServerName }
@@ -62,13 +63,14 @@ func (e *Engine) reconcileLinks() {
 			e.err(err)
 			continue
 		}
-		cli, err := client.New(client.Config{Server: net.JoinHostPort(relay.Host, fmt.Sprint(relay.Port)), ServerName: r.ServerName, Path: relay.Path, PSK: psk, TCPTransport: r.Transport, TCPPoolSize: 1, UDPPoolSize: 1, QUICInitialPacketSize: 1252})
+		l := &Link{relay: relay, transport: r.Transport, serverName: r.ServerName, signature: signature}
+		cli, err := client.New(client.Config{Server: net.JoinHostPort(relay.Host, fmt.Sprint(relay.Port)), ServerName: r.ServerName, Path: relay.Path, PSK: psk, TCPTransport: r.Transport, TCPPoolSize: 1, UDPPoolSize: 1, QUICInitialPacketSize: 1252, TLSObserver: l.observeTLS})
 		if err != nil {
 			e.err(err)
 			continue
 		}
 		ctx, cancel := context.WithCancel(context.Background())
-		l := &Link{relay: relay, transport: r.Transport, serverName: r.ServerName, signature: signature, client: cli, ctx: ctx, cancel: cancel}
+		l.client, l.ctx, l.cancel = cli, ctx, cancel
 		e.mu.Lock()
 		old := e.links[key]
 		e.links[key] = l

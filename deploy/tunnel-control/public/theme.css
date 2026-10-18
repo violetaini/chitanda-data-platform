@@ -126,3 +126,23 @@ body,body *{font-family:var(--font)!important}
 .graph-origin .graph-icon-tile{fill:#eaf0f4}
 .graph-origin .graph-role{fill:#8da4b5}
 .graph-origin .graph-status,.graph-origin .graph-status-ring{display:none}
+
+/* A shared metric layout keeps different node roles comparable. */
+.node-card{display:flex;flex-direction:column;min-width:0}
+.node-metrics .relay-detail>strong{min-width:0;text-align:right;overflow-wrap:anywhere}
+.node-tls{border-top:1px solid var(--border);padding-top:17px;margin:16px 0 23px}
+.node-tls-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#8b7c92;font-size:10px}
+.node-tls-heading h3{margin:0;color:#786980;font-size:12px;font-weight:400}
+.node-tls .relay-detail{align-items:flex-start}
+.node-tls .relay-detail>span{flex-shrink:0}
+.node-tls-values{min-width:0;text-align:right;overflow-wrap:anywhere}
+.node-tls-entry{display:block;line-height:1.7}
+.node-tls-note{color:#8b7c92;font-size:10px;line-height:1.7;min-height:3.4em;margin:12px 0 0}
+.node-card-footer{margin-top:auto}
+.node-card .error-banner{margin:0 0 18px}
+.node-tls-source{display:flex;justify-content:space-between;gap:10px;color:#8b7c92;font-size:10px;margin:17px 0}
+.node-tls-source strong{font-weight:400;color:#786980}
+.node-tls-observation+.node-tls-observation{border-top:1px dashed var(--border);margin-top:14px;padding-top:2px}
+.node-tls-details{font-size:10px;color:#8b7c92}
+.node-tls-details summary{cursor:pointer;color:#876b98}
+.node-tls-details .relay-detail strong{max-width:65%;overflow-wrap:anywhere;text-align:right}
