@@ -72,6 +72,21 @@ test('management privileges, session source binding, CSRF, origin and scoped nod
  const nodeConfig=await(await sync(mainland)).json();assert.ok(!JSON.stringify(nodeConfig).includes(selfIdentity.token));
  assert.equal((await request('/tunnel/api/routes','POST',headers,{name:'Wrong relay endpoint',source:'mainland',target:'relay-hk',relayId:relay2.node.id,listenPort:15085,targetPort:16082})).status,400);
  assert.equal((await request('/tunnel/api/routes','POST',headers,{name:'Forbidden local management',source:'mainland',target:'relay-hk',relayId:'relay-hk',listenPort:15085,targetPort:5092})).status,400);
+ const live=await(await request('/tunnel/api/state','GET',headers)).json(),testRoute=live.routes.find(r=>r.name==='Scope test');
+ const probePath='routes/'+testRoute.id+'/test';
+ assert.equal((await request('/tunnel/api/'+probePath,'POST',{'Content-Type':'application/json'},{})).status,401);
+ assert.equal((await request('/tunnel/api/'+probePath,'POST',{Cookie:headers.Cookie,'Content-Type':'application/json'},{})).status,403);
+ assert.equal((await request('/tunnel/api/'+probePath,'POST',headers,{host:'unrelated.example',port:22})).status,400);
+ for(const identity of [mainland,international,relay])await request('/transit-node/sync','POST',{'X-Node-ID':identity.id,Authorization:'Bearer '+identity.token,'Content-Type':'application/json'},{revision:live.version,capabilities:{routeProbe:1}});
+ const queued=await request('/tunnel/api/'+probePath,'POST',headers,{});assert.equal(queued.status,202);const task=(await queued.json()).test;
+ assert.equal((await request('/tunnel/api/'+probePath,'POST',headers,{})).status,409);
+ const targetJobs=await(await request('/transit-node/sync','POST',{'X-Node-ID':international.id,Authorization:'Bearer '+international.token,'Content-Type':'application/json'},{revision:live.version,capabilities:{routeProbe:1}})).json();assert.equal(targetJobs.checks.length,0);
+ const sourceJobs=await(await request('/transit-node/sync','POST',{'X-Node-ID':mainland.id,Authorization:'Bearer '+mainland.token,'Content-Type':'application/json'},{revision:live.version,capabilities:{routeProbe:1}})).json();assert.equal(sourceJobs.checks[0].id,task.id);
+ const checkResult={id:task.id,routeId:testRoute.id,revision:live.version,status:'complete',attempts:3,samples:[2,4,6]};
+ await request('/transit-node/sync','POST',{'X-Node-ID':international.id,Authorization:'Bearer '+international.token,'Content-Type':'application/json'},{revision:live.version,routeChecks:[checkResult]});
+ assert.equal((await(await request('/tunnel/api/state','GET',headers)).json()).routes.find(r=>r.id===testRoute.id).test.status,'running');
+ await request('/transit-node/sync','POST',{'X-Node-ID':mainland.id,Authorization:'Bearer '+mainland.token,'Content-Type':'application/json'},{revision:live.version,routeChecks:[checkResult]});
+ const completed=(await(await request('/tunnel/api/state','GET',headers)).json()).routes.find(r=>r.id===testRoute.id).test;assert.equal(completed.status,'success');assert.equal(completed.latency.average,4);
  const security=await(await request('/tunnel/api/security','GET',headers)).json();assert.equal(security.policy.failureLimit,5);assert.ok(security.events.every(e=>!('password' in e)&&!('username' in e)));
  const credentials={username:'another-name',password:'invalid'};assert.equal((await request('/tunnel/api/login','POST',{'Content-Type':'application/json'},credentials)).status,401);const blocked=await request('/tunnel/api/login','POST',{'Content-Type':'application/json'},credentials);assert.equal(blocked.status,429);assert.equal(blocked.headers.get('retry-after'),'2');assert.equal((await request('/tunnel/api/login','POST',{'Content-Type':'application/json'},{username:'boundary-admin',password})).status,429);
  }finally{await new Promise(resolve=>{child.once('exit',resolve);child.kill();});fs.rmSync(dir,{recursive:true,force:true});}

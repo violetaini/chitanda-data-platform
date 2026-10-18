@@ -36,21 +36,23 @@ for(const r of state.routes){r.relayId||=state.relays[0]?.id;r.transport||='h2';
 if(state.schema!==2){state.schema=2;state.version++;}delete state.relay;
 for(const r of state.relays)ensureCertificate(r);save();
 const report=id=>{const r=reports.get(id);return r?{...r,online:Date.now()-r.seen<50000}:{online:false};};
+const routeChecks=require('./route-tests.cjs')({getState:()=>state,getReport:report});
 const linkKey=r=>[r.relayId,r.transport,r.serverName].join('|');
 function cleanNode(n,relay=false){return {id:n.id,name:n.name,host:n.host||'',role:relay?'优化节点':n.role,kind:relay?'relay':'agent',...(relay?{port:n.port,serverName:n.serverName,tlsVerify:true,certExpires:n.certExpires,certNames:n.certNames,protocols:report(n.id).capabilities?.transports||[]}:{}),...report(n.id)};}
 function snapshot(){
  const relays=state.relays.map(n=>cleanNode(n,true)),nodes=state.nodes.map(n=>cleanNode(n));
- const routes=state.routes.map(r=>{const s=report(r.source),t=report(r.target),mid=report(r.relayId),key=linkKey(r),sl=s.links?.[key],tl=t.links?.[key],current=n=>Number(n.revision)>=state.version;return {...r,configPending:[s,t,mid].some(n=>n.online&&!current(n)),sourceOnline:!!(s.online&&current(s)&&s.listeners?.includes(r.id)&&(r.source===r.relayId||sl?.connected)),targetOnline:!!(t.online&&current(t)&&(r.target===r.relayId||tl?.connected)),relayOnline:!!(mid.online&&current(mid))};});
+ const routes=state.routes.map(r=>{const s=report(r.source),t=report(r.target),mid=report(r.relayId),key=linkKey(r),sl=s.links?.[key],tl=t.links?.[key],current=n=>Number(n.revision)>=state.version;return {...r,test:routeChecks.get(r.id),configPending:[s,t,mid].some(n=>n.online&&!current(n)),sourceOnline:!!(s.online&&current(s)&&s.listeners?.includes(r.id)&&(r.source===r.relayId||sl?.connected)),targetOnline:!!(t.online&&current(t)&&(r.target===r.relayId||tl?.connected)),relayOnline:!!(mid.online&&current(mid))};});
  const origins=(state.origins||[]).map(n=>({...n,kind:'origin'}));const topology={nodes:[{id:'@controller',kind:'control',name:'数据中台',host:'',online:true},...origins,...relays,...nodes],edges:[...origins.flatMap(n=>[{id:'https:'+n.id,source:n.id,target:n.endpoint,kind:'https',name:'HTTPS 业务接入',transport:'https',enabled:true},{id:'https-return:'+n.id,source:n.endpoint,target:n.id,kind:'https',name:'HTTPS 业务接入',transport:'https',enabled:true}]),...[...relays,...nodes].map(n=>({id:'config:'+n.id,source:'@controller',target:n.id,kind:'control'})),...routes.flatMap(r=>[{id:r.id+':source',source:r.source,target:r.relayId,routeId:r.id,name:r.name,transport:r.transport,enabled:r.enabled,ready:r.sourceOnline&&r.targetOnline&&r.relayOnline},{id:r.id+':target',source:r.relayId,target:r.target,routeId:r.id,name:r.name,transport:r.transport,enabled:r.enabled,ready:r.sourceOnline&&r.targetOnline&&r.relayOnline}])]};
  return {topology,origins,version:state.version,schema:2,now:new Date().toISOString(),defaultSNI:DEFAULT_SNI,relays,nodes,routes,events:state.events,histories:Object.fromEntries([...history].map(([id,s])=>[id,s.slice(-60)])),control:{version:VERSION,uptime:Math.floor(process.uptime()),memory:process.memoryUsage().rss}};
 }
 const brokerToken=(node,relay)=>crypto.createHmac('sha256',node.token).update('chitanda-broker-v1:'+relay.id).digest('hex');
-function agentConfig(id){
+function baseAgentConfig(id){
  const relay=state.relays.find(r=>r.id===id);
  if(relay){ensureCertificate(relay);return {credentialVersion:'broker-v1',role:'relay',revision:state.version,ca:state.ca,selfRelay:{id:relay.id,host:relay.host,port:relay.port,serverName:relay.serverName,path:relay.path,psk:relay.psk,ca:state.ca,certPEM:relay.certPEM,keyPEM:relay.keyPEM},nodes:[...state.nodes.filter(n=>state.routes.some(r=>r.relayId===id&&(r.source===n.id||r.target===n.id))).map(n=>({id:n.id,token:brokerToken(n,relay)})),...(state.routes.some(r=>r.relayId===id&&r.source===id)?[{id:relay.id,token:brokerToken(relay,relay)}]:[])],routes:state.routes.filter(r=>r.relayId===id)};}
  const node=state.nodes.find(n=>n.id===id),routes=state.routes.filter(r=>r.source===id||r.target===id),ids=new Set(routes.map(r=>r.relayId));
  return {credentialVersion:'broker-v1',role:'agent',revision:state.version,ca:state.ca,relays:state.relays.filter(r=>ids.has(r.id)&&r.host).map(r=>({id:r.id,host:r.host,port:r.port,serverName:r.serverName,path:r.path,psk:r.psk,ca:state.ca,brokerToken:brokerToken(node,r)})),routes};
 }
+function agentConfig(id){return {...baseAgentConfig(id),checks:routeChecks.pending(id)};}
 function validateRoute(input,id){
  const endpoints=[...state.nodes,...state.relays],source=endpoints.find(n=>n.id===input.source),target=endpoints.find(n=>n.id===input.target),relay=state.relays.find(n=>n.id===(input.relayId||state.relays[0]?.id));
  if(!source||!target||source.id===target.id)fail('请选择不同的源节点和目标节点');if(!relay)fail('请选择优化节点');if([source,target].some(n=>state.relays.includes(n)&&n.id!==relay.id))fail('作为端点的优化节点必须与所选优化节点一致');
@@ -82,8 +84,9 @@ const server=http.createServer(async(req,res)=>{try{
   r.revision=Math.min(state.version,Math.floor(r.revision||0));r.version=String(data.version||'').slice(0,40);
   r.listeners=Array.isArray(data.listeners)?data.listeners.filter(id=>state.routes.some(v=>v.id===id&&v.source===item.id)).slice(0,128):[];
   r.links={};for(const route of state.routes.filter(v=>v.source===id||v.target===id)){const key=linkKey(route),link=data.links?.[key];if(link&&typeof link==='object')r.links[key]={relayId:route.relayId,transport:route.transport,connected:link.connected===true,latency:finite(link.latency),error:String(link.error||'').slice(0,240)};}
-  if(data.capabilities&&typeof data.capabilities==='object')r.capabilities={transports:Array.isArray(data.capabilities.transports)?[...new Set(data.capabilities.transports.filter(v=>['h2','h3'].includes(v)))]:[],tlsServer:data.capabilities.tlsServer===true,tlsClient:data.capabilities.tlsClient===true};
+  if(data.capabilities&&typeof data.capabilities==='object')r.capabilities={transports:Array.isArray(data.capabilities.transports)?[...new Set(data.capabilities.transports.filter(v=>['h2','h3'].includes(v)))]:[],tlsServer:data.capabilities.tlsServer===true,tlsClient:data.capabilities.tlsClient===true,routeProbe:data.capabilities.routeProbe===1?1:0};
   r.tls=sanitizeTLS(data.tls,item,state);
+  routeChecks.accept(id,data.routeChecks);
   reports.set(id,r);
   if(state.relays.some(n=>n.id===id)){const s=history.get(id)||[];s.push({at:Date.now(),rx:r.rx||0,tx:r.tx||0,uptime:r.uptime||0,active:r.active||0,memory:r.memory||0});if(s.length>120)s.shift();history.set(id,s);}
   return json(res,200,agentConfig(id));
@@ -114,6 +117,8 @@ const server=http.createServer(async(req,res)=>{try{
   }
   if(p===BASE+'/api/state'&&req.method==='GET')return json(res,200,snapshot());
   if(p===BASE+'/api/routes'&&req.method==='POST'){if(state.routes.length>=128)fail('最多配置 128 条数据通道');const r=mutateRoute(await body(req));state.version++;audit('创建数据通道',r.name+' · '+r.transport.toUpperCase());return json(res,201,{ok:true,route:r});}
+  const testMatch=p.match(/^\/tunnel\/api\/routes\/([a-zA-Z0-9-]+)\/test$/);
+  if(testMatch&&req.method==='POST'){const route=state.routes.find(r=>r.id===testMatch[1]);if(!route)fail('数据通道不存在',404);if(Object.keys(await body(req)).length)fail('测试仅使用当前线路配置');return json(res,202,{ok:true,test:routeChecks.create(route)});}
   const routeMatch=p.match(/^\/tunnel\/api\/routes\/([a-zA-Z0-9-]+)$/);
   if(routeMatch){const i=state.routes.findIndex(r=>r.id===routeMatch[1]);if(i<0)fail('数据通道不存在',404);if(req.method==='PATCH'){const r=mutateRoute({...state.routes[i],...await body(req)},state.routes[i].id);state.version++;audit('更新数据通道',r.name+' · '+r.transport.toUpperCase()+' · '+(r.enabled?'启用':'暂停'));return json(res,200,{ok:true});}if(req.method==='DELETE'){const [r]=state.routes.splice(i,1);state.version++;audit('删除数据通道',r.name);return json(res,200,{ok:true});}}
   if(p===BASE+'/api/nodes'&&req.method==='POST'){

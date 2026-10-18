@@ -133,6 +133,10 @@ func (e *Engine) acceptOnLink(l *Link) {
 			if h.Kind == "keepalive" {
 				continue
 			}
+			if h.Kind != "open" && h.Kind != "probe" {
+				c.Close()
+				break
+			}
 			c.SetReadDeadline(time.Time{})
 			cfg := e.config()
 			var route *Route
@@ -156,6 +160,14 @@ func (e *Engine) acceptOnLink(l *Link) {
 			}
 			if send(c, Hello{OK: true}) != nil {
 				dest.Close()
+				c.Close()
+				break
+			}
+			if h.Kind == "probe" {
+				dest.Close()
+				// Keep QUIC's client stream alive until the broker consumed OK.
+				c.SetReadDeadline(time.Now().Add(3 * time.Second))
+				receive(c)
 				c.Close()
 				break
 			}
@@ -214,13 +226,22 @@ func (e *Engine) routeClient(id string) (*client.Client, Hello, error) {
 // The optimized endpoint uses the in-process broker and existing reverse pool.
 // It never creates a second tunnel identity or a second public service process.
 func (e *Engine) openRoute(id string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return e.openRouteContext(ctx, id, "dial")
+}
+func (e *Engine) openRouteContext(ctx context.Context, id, kind string) (net.Conn, error) {
+	if kind != "dial" && kind != "probe" {
+		return nil, errors.New("unsupported route operation")
+	}
 	cfg := e.config()
 	if cfg.Role != "relay" {
 		cli, hello, err := e.routeClient(id)
 		if err != nil {
 			return nil, err
 		}
-		return e.dial(cli, hello)
+		hello.Kind = kind
+		return e.dialContext(ctx, cli, hello)
 	}
 	var token string
 	for _, n := range cfg.Nodes {
@@ -235,11 +256,13 @@ func (e *Engine) openRoute(id string) (net.Conn, error) {
 		if r.ID != id || !r.Enabled || r.Source != cfg.ID || r.RelayID != cfg.ID {
 			continue
 		}
-		c, err := net.DialTimeout("tcp", e.brokerAddress, 8*time.Second)
+		c, err := (&net.Dialer{}).DialContext(ctx, "tcp", e.brokerAddress)
 		if err != nil {
 			return nil, err
 		}
-		err = send(c, Hello{Kind: "dial", Node: cfg.ID, Token: token, Route: id, Transport: r.Transport, ServerName: r.ServerName})
+		stop := context.AfterFunc(ctx, func() { c.Close() })
+		err = send(c, Hello{Kind: kind, Node: cfg.ID, Token: token, Route: id, Transport: r.Transport, ServerName: r.ServerName})
+		stop()
 		if err != nil {
 			c.Close()
 			return nil, err

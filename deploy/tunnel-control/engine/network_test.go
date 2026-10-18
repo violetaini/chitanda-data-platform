@@ -194,6 +194,7 @@ func TestRealH2H3AndSNICertificate(t *testing.T) {
 				if err = <-result; err != nil {
 					t.Fatal(err)
 				}
+				exerciseRealRouteChecks(t, e, cli, ln.Addr().String(), psk, protocol, sni)
 			})
 		}
 	}

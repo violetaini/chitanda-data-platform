@@ -27,7 +27,7 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.4.0"
+const version = "2.5.0"
 
 type Route struct {
 	RelayID    string `json:"relayId"`
@@ -58,6 +58,7 @@ type Relay struct {
 	CA          string `json:"ca"`
 }
 type Config struct {
+	Checks            []RouteCheckTask   `json:"checks,omitempty"`
 	DataGateway       *DataGatewayConfig `json:"dataGateway,omitempty"`
 	CredentialVersion string             `json:"credentialVersion"`
 	CA                string             `json:"ca"`
@@ -89,6 +90,10 @@ type Hello struct {
 	Error      string `json:"error,omitempty"`
 }
 type Engine struct {
+	syncMu        sync.Mutex
+	checkMu       sync.Mutex
+	checkBusy     bool
+	checkResults  map[string]RouteCheckResult
 	links         map[string]*Link
 	cert          atomic.Pointer[tls.Certificate]
 	publicCert    atomic.Pointer[tls.Certificate]
@@ -178,9 +183,11 @@ func (e *Engine) report() map[string]any {
 			}
 		}
 	}
-	return map[string]any{"capabilities": map[string]any{"transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
+	return map[string]any{"routeChecks": e.checkReports(), "capabilities": map[string]any{"routeProbe": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
 }
 func (e *Engine) syncConfig() error {
+	e.syncMu.Lock()
+	defer e.syncMu.Unlock()
 	cfg := e.config()
 	raw, _ := json.Marshal(e.report())
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
@@ -253,6 +260,7 @@ func (e *Engine) syncConfig() error {
 		e.pruneRevoked()
 		e.reconcileListeners()
 	}
+	e.startChecks(update.Checks)
 	return nil
 }
 func (e *Engine) controlLoop() {
@@ -370,7 +378,7 @@ func (e *Engine) handleBroker(c net.Conn) {
 			}
 		}
 	}
-	if h.Kind != "dial" {
+	if h.Kind != "dial" && h.Kind != "probe" {
 		return
 	}
 	var route *Route
@@ -401,6 +409,9 @@ func (e *Engine) handleBroker(c net.Conn) {
 		if send(c, Hello{OK: true}) != nil {
 			return
 		}
+		if h.Kind == "probe" {
+			return
+		}
 		e.connects.Add(1)
 		e.bridge(c, dest)
 		return
@@ -428,7 +439,11 @@ func (e *Engine) handleBroker(c net.Conn) {
 			e.connections[s] = metadata
 			e.mu.Unlock()
 			s.writeMu.Lock()
-			err = send(s.Conn, Hello{Kind: "open", Route: route.ID})
+			kind := "open"
+			if h.Kind == "probe" {
+				kind = "probe"
+			}
+			err = send(s.Conn, Hello{Kind: kind, Route: route.ID})
 			s.writeMu.Unlock()
 			if err != nil {
 				close(s.done)
@@ -445,6 +460,12 @@ func (e *Engine) handleBroker(c net.Conn) {
 				return
 			}
 			if err = send(c, Hello{OK: true}); err != nil {
+				close(s.done)
+				s.Close()
+				return
+			}
+			if h.Kind == "probe" {
+				send(s, Hello{Kind: "probe-received"})
 				close(s.done)
 				s.Close()
 				return
@@ -567,10 +588,18 @@ func (e *Engine) dial(cli *client.Client, h Hello) (net.Conn, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	return e.dialContext(ctx, cli, h)
+}
+func (e *Engine) dialContext(ctx context.Context, cli *client.Client, h Hello) (net.Conn, error) {
+	if len(h.Token) < 32 {
+		return nil, errors.New("broker credential missing")
+	}
 	c, err := cli.DialContext(ctx, "tcp", "bridge.internal:1")
 	if err != nil {
 		return nil, err
 	}
+	stop := context.AfterFunc(ctx, func() { c.Close() })
+	defer stop()
 	cfg := e.config()
 	h.Node = cfg.ID
 	if err = send(c, h); err != nil {
