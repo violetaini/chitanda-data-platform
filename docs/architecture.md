@@ -1,0 +1,39 @@
+# 架构与运行边界
+
+更新时间：2026-10-18
+
+控制端登记节点、管理线路、生成拓扑并签发工作区证书；控制端与业务源站可同机，但无需承担跨境节点工作。业务源站以普通 HTTPS 接入附近的数据节点，国内数据节点与境外优化节点之间使用 Chitanda H2 / TLS 1.3，H3 为可选配置，具体线路需实际验证。境外优化节点再通过 HTTPS 请求固定业务源站；反方向复用既定线路。
+
+优化节点使用单 Go 进程，无需面板、Node.js、数据库或 Docker。多个优化节点可独立登记、选用；当前实现不自动进行线路故障切换。引擎与面板报告版本为 2.3.0，面板子包的原依赖清单版本保留为 2.2.0。
+
+## 构建 Go 节点
+
+节点 `engine/` 是加入上游模块的 `package main`，不能直接在该目录 `go build`。Windows 可使用仓库脚本；其他平台可按以下步骤在独立工作目录构建：
+
+```sh
+mkdir -p tmp
+git clone https://github.com/chitanda-project/chitanda.git tmp/chitanda-tunnel-core
+git -C tmp/chitanda-tunnel-core checkout 2926cf2c41c85d2177536a4ba2d9931f1ec675f9
+mkdir -p tmp/chitanda-tunnel-core/cmd/chitanda-transit
+cp deploy/tunnel-control/engine/*.go tmp/chitanda-tunnel-core/cmd/chitanda-transit/
+cd tmp/chitanda-tunnel-core
+go test -mod=mod ./cmd/chitanda-transit
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -mod=mod -trimpath -ldflags='-s -w' -o ../chitanda-transit ./cmd/chitanda-transit
+```
+
+ARM64 目标使用 `GOARCH=arm64`。跨平台真实网络集成测试应在目标 Linux 上运行；本机交叉编译只能确认编译兼容性。
+
+独立 `gateway/` 自带模块，可以通过 `go -C deploy/tunnel-control/gateway test ./...` 验证，或在该目录构建。当前香港节点已将相关固定目标接入能力整合到主引擎；该模块保留用于独立源站适配。
+
+## 配置与权限
+
+- 面板环境：`CT_PORT`、`CT_DATA`、`CT_USERNAME`、`CT_PASSWORD_HASH`、`CT_ALLOWED_IPS`、`CT_CONTROLLER_URL`，可选 `CT_OPENSSL`。源码监听固定回环；`CT_ALLOWED_IPS` 必须与 Nginx 配置同步维护。
+- 首次账号通过环境中的用户名及 scrypt 哈希初始化；已有 `account.json` 后以私有账号文件为准，重新部署不会覆盖账号。面板支持修改用户名、密码及头像，修改凭据会撤销已有会话。
+- 管理写入校验会话、来源、CSRF、Origin 与内容类型；登录防御持久记录失败和冷却时间。节点同步接口与管理权限隔离，节点身份及优化节点内部校验身份分别限定作用域。
+- 优化节点获取自身证书与必要线路信息，接入节点仅获得相关的派生校验身份、公共 CA 及本机配置。不得复制控制端 CA 私钥到节点。
+- Nginx 必须覆盖 `X-Real-IP`，应用仅信任本机反向入口；不得将 Node 监听改到公网后依靠可伪造请求头判断来源。
+- systemd 模板中的账号、目录、文件权限和可写范围需在部署时创建并核对。账号 / 状态 / 节点配置 0600，私有目录 0700；CA、私钥及历史备份都在仓库之外。
+
+## 生产历史
+
+`deployment-history.md` 与 `data-gateway-history.md` 来自原项目，记录既有机器和验证历程，包含已被后续生产切换取代的测试阶段。本文及实际私有配置优先；这些文档不包含恢复生产身份所需的密钥。新仓库独立发布不会自动修改线上部署位置、既有域名、白名单或运行凭据。

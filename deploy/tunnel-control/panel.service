@@ -1,0 +1,25 @@
+[Unit]
+Description=Chitanda Transit control panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chitanda-transit-panel
+Group=chitanda-transit-panel
+WorkingDirectory=/opt/chitanda-transit-panel
+EnvironmentFile=/etc/chitanda-transit-panel.env
+ExecStart=/usr/local/bin/node /opt/chitanda-transit-panel/server.cjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/chitanda-tunnel
+UMask=0077
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

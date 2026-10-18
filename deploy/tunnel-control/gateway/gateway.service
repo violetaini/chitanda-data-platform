@@ -1,0 +1,29 @@
+[Unit]
+Description=Chitanda isolated HTTPS data test adapter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=chitanda-data-test
+Group=chitanda-data-test
+ExecStart=/usr/local/bin/chitanda-data-test -config /etc/chitanda-data-test/config.json
+Environment=GOMEMLIMIT=32MiB
+Environment=GOGC=50
+Environment=GOMAXPROCS=1
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+UMask=0077
+MemoryMax=64M
+TasksMax=32
+LimitNOFILE=512
+
+[Install]
+WantedBy=multi-user.target
