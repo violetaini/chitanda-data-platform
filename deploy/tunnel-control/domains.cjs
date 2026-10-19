@@ -13,19 +13,22 @@ function providerInput(input,previous={}){
  return {baseURL:url.origin,uid,zoneId,zone,apiKey};
 }
 function client(config,fetcher=fetch){
- async function call(endpoint,fields={}){
+ async function call(endpoint,fields={},retryRead=false){
+  for(let attempt=0;attempt<(retryRead?2:1);attempt++){
   const timestamp=String(Math.floor(Date.now()/1000)),sign=crypto.createHash('md5').update(String(config.uid)+timestamp+config.apiKey).digest('hex');
   let response,value;try{
    response=await fetcher(config.baseURL+'/api/'+endpoint,{method:'POST',redirect:'error',signal:AbortSignal.timeout(15000),headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({...fields,uid:String(config.uid),timestamp,sign})});
    const chunks=[];let size=0;for await(const chunk of response.body){size+=chunk.length;if(size>1048576)throw Error('large response');chunks.push(chunk);}value=JSON.parse(Buffer.concat(chunks).toString());
-  }catch{fail('DNS 管理服务暂时不可用，请检查连接配置',502);}
+  }catch{if(retryRead&&attempt===0)continue;fail('DNS 管理服务暂时不可用，请稍后重试',502);}
+  if(!response.ok&&response.status>=500&&retryRead&&attempt===0)continue;
   if(!response.ok||value.code!==undefined&&value.code!==0)fail('DNS 管理 API 请求失败，请检查 API 权限及区域配置',502);
   return value;
+  }
  }
  const relative=name=>{if(!name.endsWith('.'+config.zone))fail('域名须位于已接入区域下');return name.slice(0,-config.zone.length-1);};
  return {
-  async zone(){const result=await call('domain/'+config.zoneId);if(result.data?.name!==config.zone)fail('DNS 区域 ID 与域名不一致');const lines=result.data.recordLine||[];if(!['default_view','Abroad'].every(id=>lines.some(v=>v.id===id)))fail('DNS 区域不支持默认及境外线路');return {zone:config.zone,minTTL:Number(result.data.minTTL)||1};},
-  async records(name){let rows=[],offset=0;for(let page=0;page<20;page++){const v=await call('record/data/'+config.zoneId,{subdomain:relative(name),offset:String(offset),limit:'100'});if(!Array.isArray(v.rows)||!Number.isInteger(v.total))fail('DNS 记录响应不完整',502);rows.push(...v.rows);if(rows.length>=v.total)return rows;offset+=100;}fail('该域名记录过多，请先整理',409);},
+  async zone(){const result=await call('domain/'+config.zoneId,{},true);if(result.data?.name!==config.zone)fail('DNS 区域 ID 与域名不一致');const lines=result.data.recordLine||[];if(!['default_view','Abroad'].every(id=>lines.some(v=>v.id===id)))fail('DNS 区域不支持默认及境外线路');return {zone:config.zone,minTTL:Number(result.data.minTTL)||1};},
+  async records(name){let rows=[],offset=0;for(let page=0;page<20;page++){const v=await call('record/data/'+config.zoneId,{subdomain:relative(name),offset:String(offset),limit:'100'},true);if(!Array.isArray(v.rows)||!Number.isInteger(v.total))fail('DNS 记录响应不完整',502);rows.push(...v.rows);if(rows.length>=v.total)return rows;offset+=100;}fail('该域名记录过多，请先整理',409);},
   async add(record){await call('record/add/'+config.zoneId,{name:record.Name,type:record.Type,value:record.Value.join(','),line:record.Line,ttl:String(record.TTL),weight:String(record.Weight??1),mx:String(record.MX??1),remark:record.Remark||''});},
   async remove(record){await call('record/delete/'+config.zoneId,{recordid:record.RecordId});},
   async update(record,previous){await call('record/update/'+config.zoneId,{recordid:previous.RecordId,name:record.Name,type:record.Type,value:record.Value.join(','),line:record.Line,ttl:String(record.TTL),weight:String(record.Weight??1),mx:String(record.MX??1),remark:record.Remark||''});},

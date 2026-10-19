@@ -252,3 +252,5 @@ label{font-size:15px}input,select,.certificate-settings textarea{font-size:16px}
 
 /* Per-tunnel automatic DNS status. */
 .domain-address-status{overflow-wrap:anywhere}.domain-address-status svg{display:inline-block;width:15px;height:15px;vertical-align:-3px;margin-right:7px}.domain-address-status.has-error{color:var(--red)}
+
+.domain-address-status.has-warning{color:#927b50}

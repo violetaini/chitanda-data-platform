@@ -67,3 +67,10 @@ test('node changes during certificate validation cannot publish an obsolete addr
  const f=await published(t),before=structuredClone(f.records());f.state.nodes[0].host='9.9.9.9';f.setProbe(async n=>{if(n.id==='cn')n.host='8.8.4.4';return {nodeId:n.id};});
  await assert.rejects(f.m.syncAddresses(f.b.id),e=>e.status===409);assert.deepEqual(f.records(),before);
 });
+test('DNS reads retry a transient failure once while mutations are never retried',async()=>{
+ let reads=0,writes=0;const config={baseURL:'https://dns.example.com',uid:1001,apiKey:'private-fixture-key',zoneId:3,zone:'example.com'};
+ const c=manager.client(config,async url=>{if(url.includes('/record/data/')){if(++reads===1)throw Error('transient network failure');return new Response(JSON.stringify({rows:[],total:0}),{status:200});}writes++;throw Error('provider might have committed the write');});
+ assert.deepEqual(await c.records('sync.example.com'),[]);assert.equal(reads,2);
+ await assert.rejects(c.update({Name:'sync',Type:'A',Value:['9.9.9.9'],Line:'default_view',TTL:1},{RecordId:'one'}),e=>e.status===502);assert.equal(writes,1);
+ let attempts=0;const broken=manager.client(config,async()=>{attempts++;return new Response('unavailable',{status:503});});await assert.rejects(broken.zone(),e=>e.status===502);assert.equal(attempts,2);
+});
