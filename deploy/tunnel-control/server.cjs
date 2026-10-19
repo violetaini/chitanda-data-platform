@@ -43,6 +43,7 @@ for(const r of state.relays)ensureCertificate(r);save();
 const report=id=>{const r=reports.get(id);return r?{...r,online:Date.now()-r.seen<50000}:{online:false};};
 const routeChecks=require('./route-tests.cjs')({getState:()=>state,getReport:report,getSettings:()=>state.settings.routeChecks,storageFile:path.join(DATA,'route-checks.json')});
 const domains=require('./domains.cjs')({dataDir:DATA,getState:()=>state,save,audit});
+const installations=require('./node-installations.cjs')({dataDir:DATA,releaseDir:process.env.CT_RELEASE_DIR||path.join(ROOT,'releases'),getState:()=>state,enrollment,audit});
 const dnsAddressSync=require('./dns-address-sync.cjs')({getState:()=>state,syncAddresses:domains.syncAddresses,isBusy:domains.isBusy,save,audit});
 setInterval(()=>{dnsAddressSync.tick().catch(()=>console.error('DNS address maintenance failed'));},5000).unref();
 const tunnelManager=tunnelModel({getState:()=>state,validateRoute,ensureCertificates:()=>{for(const r of state.relays)ensureCertificate(r);},audit});
@@ -92,7 +93,7 @@ async function writeTunnel(input,id){
  return {ok:true,tunnel,binding};
 }
 function mutateRoute(input,id){const candidate=validateRoute(input,id),old=state.routes,index=old.findIndex(r=>r.id===id);state.routes=index>=0?old.map((r,i)=>i===index?{...candidate,createdAt:r.createdAt}:r):[...old,candidate];try{ensureCertificate(state.relays.find(r=>r.id===candidate.relayId));}catch(e){state.routes=old;throw e;}return candidate;}
-function enrollment(n,relay){audit('获取接入配置',n.name);return {controller:process.env.CT_CONTROLLER_URL||'https://datahub.chitanda.net',controllerAddress:'110.42.32.161:443',id:n.id,token:n.token,role:relay?'relay':'agent',ca:state.ca};}
+function enrollment(n,relay){return {controller:process.env.CT_CONTROLLER_URL||'https://datahub.chitanda.net',controllerAddress:process.env.CT_CONTROLLER_ADDRESS||'',id:n.id,token:n.token,role:relay?'relay':'agent',ca:state.ca};}
 const server=http.createServer(async(req,res)=>{try{
  for(const [k,v]of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"}))res.setHeader(k,v);
  const p=new URL(req.url,'http://localhost').pathname,clientIP=String(req.headers['x-real-ip']||req.socket.remoteAddress||'').replace(/^::ffff:/,'');
@@ -104,6 +105,17 @@ const server=http.createServer(async(req,res)=>{try{
   if(p===BASE+'/api/login'&&!String(req.headers['content-type']||'').toLowerCase().startsWith('application/json'))return json(res,415,{error:'请使用 JSON 格式请求'});
  }
  if(p==='/health')return json(res,200,{ok:true});
+ if(p==='/transit-node/install.sh'&&req.method==='GET'){res.writeHead(200,{'Content-Type':'text/x-shellscript; charset=utf-8','Cache-Control':'no-store'});return fs.createReadStream(path.join(ROOT,'node-install.sh')).pipe(res);}
+ if(p==='/transit-node/enroll'&&req.method==='POST')return json(res,200,installations.claim(await body(req,4096),clientIP));
+ if(p==='/transit-node/release'||p==='/transit-node/status'||p.startsWith('/transit-node/releases/')){
+  const id=req.headers['x-node-id'],token=String(req.headers.authorization||'').replace(/^Bearer /,''),item=[...state.relays,...state.nodes].find(n=>n.id===id);
+  if(!item||!equal(token,item.token))return json(res,401,{error:'节点认证失败'});
+  if(req.method!=='GET')return json(res,405,{error:'请求方式不支持'});
+  if(p==='/transit-node/release')return json(res,200,installations.release());
+  if(p==='/transit-node/status'){const r=report(id);return json(res,200,{id,online:!!r.online,version:r.version,revision:r.revision,seen:r.seen});}
+  const platform=p.slice('/transit-node/releases/'.length);if(!/^linux-(amd64|arm64)$/.test(platform))return json(res,404,{error:'安装包不存在'});
+  const asset=installations.asset(platform);res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':asset.size,'Cache-Control':'no-store'});return fs.createReadStream(asset.file).pipe(res);
+ }
  if(p==='/transit-node/sync'&&req.method==='POST'){
   const id=req.headers['x-node-id'],token=String(req.headers.authorization||'').replace(/^Bearer /,''),item=[...state.relays,...state.nodes].find(n=>n.id===id);
   if(!item||!equal(token,item.token))return json(res,401,{error:'节点认证失败'});
@@ -176,11 +188,12 @@ const server=http.createServer(async(req,res)=>{try{
    if(req.method==='DELETE'){if(state.domains?.some(b=>state.routes.some(r=>[r.source,r.target,r.relayId].includes(id)&&[b.mainlandRouteId,b.internationalRouteId].includes(r.id))))fail('请先处理绑定此节点的业务域名',409);const linked=state.routes.filter(r=>r.source===id||r.target===id||r.relayId===id),b=await body(req);if(linked.length&&!b.cascade)return json(res,409,{error:'节点被数据通道引用，请确认一并删除关联数据通道',routes:linked.map(r=>r.name)});state.routes=state.routes.filter(r=>!linked.includes(r));state.nodes=state.nodes.filter(x=>x.id!==id);state.relays=state.relays.filter(x=>x.id!==id);reports.delete(id);history.delete(id);state.version++;audit('删除节点',n.name+' · 撤销凭据并删除 '+linked.length+' 条关联数据通道');return json(res,200,{ok:true,deletedRoutes:linked.length});}
    if(req.method==='PATCH'){const b=await body(req);if(b.name!==undefined){const name=String(b.name).trim();if(!name||name.length>60)fail('节点名称应为 1–60 字符');n.name=name;}state.version++;audit('更新节点',n.name);return json(res,200,{ok:true});}
   }
-  if(p===BASE+'/api/enrollment'&&req.method==='POST'){const b=await body(req),relay=state.relays.find(n=>n.id===b.id),n=relay||state.nodes.find(n=>n.id===b.id);if(!n)fail('节点不存在',404);return json(res,200,enrollment(n,!!relay));}
+  if(p===BASE+'/api/installations'&&req.method==='POST'){const b=await body(req);if(Object.keys(b).some(k=>k!=='id')||typeof b.id!=='string')fail('安装命令参数不正确');return json(res,200,installations.issue(b.id));}
+  if(p===BASE+'/api/enrollment'&&req.method==='POST'){const b=await body(req),relay=state.relays.find(n=>n.id===b.id),n=relay||state.nodes.find(n=>n.id===b.id);if(!n)fail('节点不存在',404);audit('获取接入配置',n.name);return json(res,200,enrollment(n,!!relay));}
   return json(res,404,{error:'接口不存在'});
  }
  if(req.method!=='GET'&&req.method!=='HEAD')return json(res,405,{error:'不支持该方法'});
- const file=({[BASE]:'index.html',[BASE+'/']:'index.html',[BASE+'/app.js']:'app.js',[BASE+'/ui.js']:'ui.js',[BASE+'/graph-model.js']:'graph-model.js',[BASE+'/dashboard.js']:'dashboard.js',[BASE+'/style.css']:'style.css',[BASE+'/theme.css']:'theme.css',[BASE+'/account.js']:'account.js',[BASE+'/settings.js']:'settings.js',[BASE+'/domains.js']:'domains.js',[BASE+'/security.js']:'security.js',[BASE+'/favicon.ico']:'favicon.ico',[BASE+'/favicon.png']:'favicon.png',[BASE+'/brand-logo.webp']:'brand-logo.webp'})[p];if(!file)return json(res,404,{error:'页面不存在'});
+ const file=({[BASE]:'index.html',[BASE+'/']:'index.html',[BASE+'/app.js']:'app.js',[BASE+'/ui.js']:'ui.js',[BASE+'/onboarding.js']:'onboarding.js',[BASE+'/graph-model.js']:'graph-model.js',[BASE+'/dashboard.js']:'dashboard.js',[BASE+'/style.css']:'style.css',[BASE+'/theme.css']:'theme.css',[BASE+'/account.js']:'account.js',[BASE+'/settings.js']:'settings.js',[BASE+'/domains.js']:'domains.js',[BASE+'/security.js']:'security.js',[BASE+'/favicon.ico']:'favicon.ico',[BASE+'/favicon.png']:'favicon.png',[BASE+'/brand-logo.webp']:'brand-logo.webp'})[p];if(!file)return json(res,404,{error:'页面不存在'});
  res.writeHead(200,{'Content-Type':({'.html':'text/html','.js':'text/javascript','.css':'text/css','.ico':'image/x-icon','.png':'image/png','.webp':'image/webp'})[path.extname(file)]+(/\.(html|js|css)$/.test(file)?'; charset=utf-8':''),'Cache-Control':'no-store'});if(req.method==='HEAD')return res.end();fs.createReadStream(path.join(ROOT,'public',file)).pipe(res);
  }catch(e){console.error('request failed:',e.status?e.message:'internal error');if(!res.headersSent)json(res,e.status||500,{error:e.status?e.message:'服务暂时不可用',...(e.retryAfter?{retryAfter:e.retryAfter}:{})},e.retryAfter?{'Retry-After':String(e.retryAfter)}:{});else res.destroy();}});
 setInterval(()=>{for(const [k,v]of sessions)if(v.until<Date.now())sessions.delete(k);},600000).unref();

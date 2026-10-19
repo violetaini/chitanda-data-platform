@@ -27,7 +27,7 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.7.1"
+const version = "2.7.2"
 
 type Route struct {
 	RelayID    string `json:"relayId"`
@@ -715,7 +715,12 @@ func compatibleCache(current, cached Config) bool {
 }
 func main() {
 	cfgPath := flag.String("config", "/etc/chitanda-transit/config.json", "configuration file")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 	raw, err := os.ReadFile(*cfgPath)
 	if err != nil {
 		log.Fatal(err)

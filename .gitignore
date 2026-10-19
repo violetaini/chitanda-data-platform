@@ -27,3 +27,7 @@ pki/
 
 dns-provider.json
 dns-backup-*.json
+
+node-installations.json
+node-installations.json.tmp
+deploy/tunnel-control/releases/

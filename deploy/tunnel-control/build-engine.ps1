@@ -1,3 +1,4 @@
+param([ValidateSet('amd64','arm64')][string]$Architecture = 'amd64')
 $ErrorActionPreference = 'Stop'
 $workspaceRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $sourcePath = Join-Path $workspaceRoot 'tmp/chitanda-tunnel-core'
@@ -20,10 +21,12 @@ $destinationPath = Join-Path $sourcePath 'cmd/chitanda-transit'
 New-Item -ItemType Directory -Force -Path $destinationPath | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'engine') -Filter '*.go' -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $destinationPath $_.Name) }
 $env:GOOS = 'linux'
-$env:GOARCH = 'amd64'
+$env:GOARCH = $Architecture
 $env:CGO_ENABLED = '0'
 Push-Location $sourcePath
 try {
-    go build -mod=mod -trimpath -ldflags '-s -w' -o (Join-Path $workspaceRoot 'tmp/chitanda-transit') ./cmd/chitanda-transit
+    $outputPath = Join-Path $workspaceRoot "tmp/chitanda-transit-linux-$Architecture"
+    go build -mod=mod -trimpath -ldflags '-s -w' -o $outputPath ./cmd/chitanda-transit
     if ($LASTEXITCODE -ne 0) { throw 'Engine build failed' }
+    if ($Architecture -eq 'amd64') { Copy-Item -LiteralPath $outputPath -Destination (Join-Path $workspaceRoot 'tmp/chitanda-transit') }
 } finally { Pop-Location }
