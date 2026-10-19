@@ -11,7 +11,11 @@
 
 ## 授权来源与回源校验
 
-只允许公网 `123.119.187.76` 或回环来源管理。CDN 出口地址不属于管理员白名单，不直接信任访客提供的 X-Real-IP、X-Forwarded-For 或 CF 来源头。
+只允许配置中明确登记的管理员公网 IPv4 / IPv6 或回环来源管理。保留原公网 IPv4，管理员当前 IPv6 另存于源站私有配置。CDN 出口地址不属于管理员白名单，不直接信任访客提供的 X-Real-IP、X-Forwarded-For 或 CF 来源头。
+
+浏览器可能优先使用 IPv6；即使同一台电脑的 IPv4 未变，IPv6 未登记也会被拒绝。新增授权地址须同时更新私有 Nginx map 的直连名单、已验证 CDN 的访客精确匹配，以及 `/etc/chitanda-transit-panel.env` 的 `CT_ALLOWED_IPS`，检查 Nginx 配置后重新加载 Nginx 并重启控制端。只加入实际确认的完整地址，不放行整个网段或所有 CDN 访客。IPv6 地址发生变化时需重新登记，原来源绑定会话可能要求重新登录。
+
+2026-10-19 修复验收：通过既有 TLS / PROXY protocol 入口模拟 CDN 回源，当前授权 IPv6 的页面与脚本返回 200，未登录会话接口返回 401；原 IPv4 返回 200。未登记 IPv6、缺失或错误回源凭据、重复访客来源头均返回 403，共 8 项检查通过。私有配置修改前备份位于 `/var/backups/chitanda-transit/ipv6-access-20261019T082502Z/`。
 
 ESA 仅在新主机范围内设置 `X-Chitanda-Edge-Key` 和动态 `X-Chitanda-Visitor-IP`（`ip.src`）。源站必须先验证私有回源凭据，再精确匹配访客授权 IP。没有有效回源凭据时，只按实际直连 IP 判断；伪造或重复的值不能满足严格匹配。应用收到由 Nginx 重新设置的来源头后再次执行原白名单、会话和 CSRF 校验。
 

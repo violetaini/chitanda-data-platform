@@ -9,10 +9,14 @@ geo $remote_addr $datahub_direct_admin {
     123.119.187.76 1;
     127.0.0.1 1;
     ::1 1;
+    # For an authorized IPv6 visitor, add the exact address here, in the CDN
+    # map below, and in the private CT_ALLOWED_IPS environment setting.
+    # 2001:db8::1234 1;
 }
 map "$datahub_verified_edge:$http_x_chitanda_visitor_ip" $datahub_cdn_admin {
     default 0;
     "1:123.119.187.76" 1;
+    # "1:2001:db8::1234" 1;
 }
 map "$datahub_direct_admin:$datahub_cdn_admin" $datahub_admin_allowed {
     default 0;
