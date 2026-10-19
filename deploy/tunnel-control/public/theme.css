@@ -196,3 +196,56 @@ body,body *{font-family:var(--font)!important}
 /* Compact channel summaries; configuration remains available on demand. */
 .route-card.tunnel-card{padding:20px 24px}.tunnel-card>.route-card-head{margin-bottom:12px;align-items:center;gap:12px}.tunnel-card .route-card-title{display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap}.tunnel-card .route-card-title h2{margin:0;font-size:16px;line-height:1.5}.tunnel-mode{font-size:11px;color:var(--muted);background:#b49ac112;padding:3px 8px;border-radius:6px;white-space:nowrap}.tunnel-overall-status{display:inline-flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap;color:#a17960}.tunnel-overall-status i{width:6px;height:6px;border-radius:50%;background:currentColor}.tunnel-overall-status.is-ready{color:#738a68}.tunnel-brief{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 20px;font-size:13px;color:var(--muted)}.tunnel-endpoints{display:flex;align-items:center;gap:10px;flex-wrap:wrap;grid-column:1;min-width:0;overflow-wrap:anywhere}.tunnel-endpoints b{font-weight:400;color:#b49ac1}.tunnel-endpoints small{font-size:11px}.tunnel-brief-domains{display:flex;align-items:center;gap:8px;flex-wrap:wrap;grid-column:1;min-width:0}.tunnel-brief-domains>svg{width:14px;height:14px;flex-shrink:0}.tunnel-brief-domains>span{overflow-wrap:anywhere;min-width:0}.tunnel-brief-domains small{font-size:11px;margin-left:8px;color:#9b8ba4}.tunnel-brief-domains .has-error{color:#b77a69}.tunnel-expand{grid-column:2;grid-row:1/3;align-self:center;display:flex;align-items:center;gap:5px;white-space:nowrap;font-size:12px;padding:8px 0 8px 10px}.tunnel-expand svg{width:14px;height:14px;transform:rotate(90deg)}.tunnel-expand[aria-expanded=true] svg{transform:rotate(-90deg)}.tunnel-expanded[hidden]{display:none!important}.tunnel-expanded{border-top:1px solid var(--border);margin-top:16px;padding-top:12px}.tunnel-detail-actions{display:flex;align-items:center;gap:5px;margin-bottom:8px}.tunnel-detail-actions>span{font-size:12px;color:var(--muted);margin-right:auto}.tunnel-directions{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:20px}.tunnel-directions .tunnel-direction{border:0;padding:8px 0 16px}.tunnel-direction-head>div:first-child{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.tunnel-direction .tunnel-protocol{margin:0}.tunnel-direction .route-path{margin-top:12px;padding:10px 12px;font-size:12px;gap:8px}.tunnel-direction .route-security{margin-top:10px;font-size:11px}.tunnel-direction .route-test-result{margin-top:12px;padding:10px 12px}.tunnel-direction .route-test-latency{font-size:17px}.tunnel-direction .route-test-meta{gap:5px 12px;margin-top:6px}.tunnel-domains{padding-top:16px}.tunnel-domains>h3{font-size:15px;margin:0 0 12px}.tunnel-domains .domain-binding{padding:12px 0}.tunnel-domains .domain-binding:first-of-type{border-top:0;padding-top:0}.tunnel-domains .domain-binding-heading h3{font-size:14px;margin-bottom:4px}.tunnel-domains .domain-binding-heading p{font-size:11px;margin:0}.tunnel-domains .domain-cname{font-size:12px;margin-top:12px}.tunnel-domains .domain-cname input{min-height:38px;margin-top:6px;padding:9px 12px}.tunnel-domains .domain-regions{margin:14px 0;gap:14px}.tunnel-domains .domain-regions>div{gap:5px}.tunnel-domains .domain-regions strong{font-size:13px}.tunnel-domains .dialog-actions{margin-top:12px;padding-top:12px}.tunnel-domains .form-error:empty{display:none}.tunnel-domain-create{padding:12px 14px;margin-top:14px}.tunnel-domain-create .muted{font-size:12px}.tunnel-domains .domain-preview{padding:12px}.tunnel-domains .domain-preview p{margin:6px 0}.tunnel-merge-form{padding:12px 0 16px}
 @media(max-width:600px){.route-card.tunnel-card{padding:17px}.tunnel-card>.route-card-head{flex-wrap:nowrap;align-items:flex-start;gap:8px}.tunnel-card .route-card-title{gap:6px}.tunnel-card .route-card-title h2{font-size:14px}.tunnel-card .route-card-head>.route-actions{gap:8px}.tunnel-overall-status{font-size:11px}.tunnel-mode{font-size:10px;padding:2px 6px}.tunnel-brief{font-size:12px;gap:8px 10px}.tunnel-endpoints{gap:6px}.tunnel-brief-domains small{display:block;margin:4px 0 0}.tunnel-expand{font-size:11px;gap:2px;padding-left:5px}.tunnel-directions{gap:8px}.tunnel-direction .route-path{font-size:11px}.tunnel-domains .domain-regions{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Readable administration typography, including compact and mobile views. */
+:root{--ui-text:16px;--ui-small:14px;--ui-caption:13px}
+body{font-size:var(--ui-text);line-height:1.7}
+.nav-item{font-size:16px}.brand-sub{font-size:10px}.nav-label{font-size:11px}
+.workspace small,.workspace-badge,.sidebar-bottom,.profile small,#control-version{font-size:12px}
+.breadcrumb,.restricted,.topbar-right,.page-footer{font-size:12px}
+.section-kicker,.eyebrow,.live-badge,.panel-sub{font-size:12px}
+.page-heading p,.login-form-inner>p,.account-security>p{font-size:15px;line-height:1.8}
+.panel-title h2{font-size:18px}.node-card h2{font-size:21px}
+.button,.text-button{font-size:15px}.button{line-height:1.5}
+.stat-label{font-size:15px}.stat-foot{font-size:13px}.stat-value small{font-size:14px}
+.relay-detail,.relay-summary .relay-heading strong{font-size:15px}
+.relay-summary .relay-heading small,.relay-note,.node-kind{font-size:13px}
+.tag,.relay-summary .relay-heading .tag,.route-actions .tag{font-size:12px}
+.node-table th{font-size:13px}.node-table td,.table-name strong{font-size:15px}
+.table-name small{font-size:13px}
+label{font-size:15px}input,select,.certificate-settings textarea{font-size:16px}
+.form-note,.form-error,.dialog-intro,.dialog-heading+p,.tls-details small{font-size:13px;line-height:1.8}
+.tls-details strong{font-size:15px}.login-note,.login-foot{font-size:12px}
+.account-profile>.muted,.avatar-hint,.password-hint,.account-security label small{font-size:13px}
+.route-card h2,.tunnel-card .route-card-title h2{font-size:18px}
+.tunnel-brief,.tunnel-direction .route-path,.route-path,.route-path .relay-path{font-size:15px}
+.tunnel-mode,.tunnel-overall-status,.tunnel-protocol,.tunnel-endpoints small,.tunnel-brief-domains small{font-size:13px}
+.tunnel-expand,.tunnel-detail-actions>span,.tunnel-direction-head strong{font-size:14px}
+.button.route-test-button,.route-security,.tunnel-direction .route-security{font-size:13px}
+.route-test-result,.route-test-meta,.route-test-latency small{font-size:13px;line-height:1.8}
+.tunnel-direction .route-test-latency{font-size:20px}
+.tunnel-domains>h3{font-size:18px}.tunnel-domains .domain-binding-heading h3{font-size:16px}
+.tunnel-domains>.muted,.tunnel-domain-create .muted,.tunnel-domain-create summary,.domain-binding-heading p,.domain-preview p,.tunnel-domains .domain-binding-heading p,.domain-regions small,.domain-regions span,.tunnel-domains .domain-cname,.route-domain small{font-size:14px}
+.tunnel-domains .domain-regions strong{font-size:15px}
+.tunnel-domains .domain-cname input,.route-domain code{font-size:14px}
+.system-settings-enable small,.system-settings-panel label>small,.system-settings-version{font-size:14px}
+.system-settings-notes p,.certificate-summary,.certificate-observation{font-size:15px;line-height:1.8}
+.security-facts small,.security-note,.security-events>div,.security-events time{font-size:13px}
+.security-facts strong{font-size:16px}
+.activity-row strong,.guide-step h3{font-size:16px}
+.activity-row p,.guide-step p{font-size:14px;line-height:1.8}.activity-row time{font-size:13px}
+.chart-controls select,.chart-controls #chart-relay,.chart-summary,.chart-summary small,.chart-caption{font-size:13px}
+.chart-axis-label,.chart-unit{font-size:12px}.chart-summary strong{font-size:21px}
+.topology-toolbar,.topology-footer,.topology-footer>span{font-size:12px}.toast{font-size:14px}
+@media(max-width:720px){
+ .nav-item{font-size:15px;padding:12px 11px}.page-heading p{font-size:14px}
+ .button,.heading-actions .button{font-size:14px}.panel-title h2{font-size:17px}
+ .stat-label{font-size:14px}.stat-foot{font-size:12px}.panel-sub{font-size:12px}
+ .route-card h2,.tunnel-card .route-card-title h2{font-size:17px}
+ .tunnel-brief,.tunnel-direction .route-path,.route-path,.route-path .relay-path{font-size:14px}
+ .tunnel-expand{font-size:14px}.tunnel-mode,.tunnel-overall-status{font-size:12px}
+ .guide-step p{font-size:14px}.activity-row time,.page-footer{font-size:12px}
+ .topology-footer{gap:10px}.topology-footer>span{line-height:1.8}
+}
+
+.workspace{gap:7px;padding-inline:10px}.workspace-logo{width:28px;padding:5px;flex-shrink:0}.workspace>div{min-width:0;white-space:nowrap;font-size:13px;letter-spacing:0}.workspace small{font-size:11px;letter-spacing:0;overflow:hidden;text-overflow:ellipsis}.workspace-badge{font-size:10px;letter-spacing:.3px;margin-left:auto}
