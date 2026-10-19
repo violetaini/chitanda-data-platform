@@ -37,10 +37,12 @@ if(!state.relays)state.relays=state.relay?[state.relay]:[];
 for(const r of state.relays){if(r.serverName==='relay.internal'||!r.serverName)r.serverName=DEFAULT_SNI;r.port=r.port||443;}
 for(const r of state.routes){r.relayId||=state.relays[0]?.id;r.transport||='h2';r.serverName=r.transport==='stream'?'':r.serverName&&r.serverName!=='relay.internal'?r.serverName:state.relays.find(n=>n.id===r.relayId)?.serverName||DEFAULT_SNI;r.tlsVerify=true;}
 if(state.schema!==2){state.schema=2;state.version++;}delete state.relay;
+const tunnelModel=require('./tunnels.cjs');tunnelModel.normalize(state);
 for(const r of state.relays)ensureCertificate(r);save();
 const report=id=>{const r=reports.get(id);return r?{...r,online:Date.now()-r.seen<50000}:{online:false};};
 const routeChecks=require('./route-tests.cjs')({getState:()=>state,getReport:report,getSettings:()=>state.settings.routeChecks,storageFile:path.join(DATA,'route-checks.json')});
 const domains=require('./domains.cjs')({dataDir:DATA,getState:()=>state,save,audit});
+const tunnelManager=tunnelModel({getState:()=>state,validateRoute,ensureCertificates:()=>{for(const r of state.relays)ensureCertificate(r);},audit});
 setInterval(()=>{try{routeChecks.tick();}catch{console.error('route check scheduling failed');}},5000).unref();
 const linkKey=r=>[r.relayId,r.transport,r.serverName].join('|');
 function cleanNode(n,relay=false){return {id:n.id,name:n.name,host:n.host||'',role:relay?'优化节点':n.role,kind:relay?'relay':'agent',ingress:n.ingress||null,...(relay?{port:n.port,serverName:n.serverName,tlsVerify:true,certExpires:n.certExpires,certNames:n.certNames,protocols:report(n.id).capabilities?.transports||[]}:{}),...report(n.id)};}
@@ -48,7 +50,7 @@ function snapshot(){
  const relays=state.relays.map(n=>cleanNode(n,true)),nodes=state.nodes.map(n=>cleanNode(n));
  const routes=state.routes.map(r=>{const s=report(r.source),t=report(r.target),mid=report(r.relayId),key=linkKey(r),sl=s.links?.[key],tl=t.links?.[key],current=n=>Number(n.revision)>=state.version;return {...r,test:routeChecks.get(r.id),configPending:[s,t,mid].some(n=>n.online&&!current(n)),sourceOnline:!!(s.online&&current(s)&&s.listeners?.includes(r.id)&&(r.source===r.relayId||sl?.connected)),targetOnline:!!(t.online&&current(t)&&(r.target===r.relayId||tl?.connected)),relayOnline:!!(mid.online&&current(mid))};});
  const origins=(state.origins||[]).map(n=>({...n,kind:'origin'}));const topology={nodes:[{id:'@controller',kind:'control',name:'数据中台',host:'',online:true},...origins,...relays,...nodes],edges:[...origins.flatMap(n=>[{id:'https:'+n.id,source:n.id,target:n.endpoint,kind:'https',name:'HTTPS 业务接入',transport:'https',enabled:true},{id:'https-return:'+n.id,source:n.endpoint,target:n.id,kind:'https',name:'HTTPS 业务接入',transport:'https',enabled:true}]),...[...relays,...nodes].map(n=>({id:'config:'+n.id,source:'@controller',target:n.id,kind:'control'})),...routes.flatMap(r=>[{id:r.id+':source',source:r.source,target:r.relayId,routeId:r.id,name:r.name,transport:r.transport,enabled:r.enabled,ready:r.sourceOnline&&r.targetOnline&&r.relayOnline},{id:r.id+':target',source:r.relayId,target:r.target,routeId:r.id,name:r.name,transport:r.transport,enabled:r.enabled,ready:r.sourceOnline&&r.targetOnline&&r.relayOnline}])]};
- return {topology,origins,dns:domains.summary(),settings:{...systemSettings.read(state.settings),certificates:certificates.read(state)},version:state.version,schema:2,now:new Date().toISOString(),defaultSNI:DEFAULT_SNI,relays,nodes,routes,events:state.events,histories:Object.fromEntries([...history].map(([id,s])=>[id,s.slice(-60)])),control:{version:VERSION,uptime:Math.floor(process.uptime()),memory:process.memoryUsage().rss}};
+ return {topology,origins,tunnels:tunnelModel.normalize(state),dns:domains.summary(),settings:{...systemSettings.read(state.settings),certificates:certificates.read(state)},version:state.version,schema:2,now:new Date().toISOString(),defaultSNI:DEFAULT_SNI,relays,nodes,routes,events:state.events,histories:Object.fromEntries([...history].map(([id,s])=>[id,s.slice(-60)])),control:{version:VERSION,uptime:Math.floor(process.uptime()),memory:process.memoryUsage().rss}};
 }
 const brokerToken=(node,relay)=>crypto.createHmac('sha256',node.token).update('chitanda-broker-v1:'+relay.id).digest('hex');
 function baseAgentConfig(id){
@@ -122,6 +124,11 @@ const server=http.createServer(async(req,res)=>{try{
    catch(e){if(e.code==='BAD_CURRENT_PASSWORD')defense.failure(ticket);throw e;}finally{defense.finish(ticket);}
   }
   if(p===BASE+'/api/state'&&req.method==='GET')return json(res,200,snapshot());
+  if(domains.isBusy()&&/\/api\/(tunnels|routes|nodes)(\/|$)/.test(p)&&!['GET','HEAD'].includes(req.method))fail('DNS 正在发布，请稍后修改隧道或节点',409);
+  if(p===BASE+'/api/tunnels'&&req.method==='POST')return json(res,201,{ok:true,tunnel:tunnelManager.write(await body(req))});
+  if(p===BASE+'/api/tunnels/merge'&&req.method==='POST')return json(res,200,{ok:true,tunnel:tunnelManager.merge(await body(req))});
+  const tunnelMatch=p.match(/^\/tunnel\/api\/tunnels\/([a-zA-Z0-9-]+)$/);
+  if(tunnelMatch){const id=tunnelMatch[1];if(req.method==='PATCH')return json(res,200,{ok:true,tunnel:tunnelManager.write(await body(req),id)});if(req.method==='DELETE'){await body(req);tunnelManager.remove(id);return json(res,200,{ok:true});}}
   if(p===BASE+'/api/dns-provider'&&req.method==='PUT')return json(res,200,await domains.configure(await body(req)));
   if(p===BASE+'/api/domains'&&req.method==='POST')return json(res,201,{binding:domains.create(await body(req))});
   const domainMatch=p.match(/^\/tunnel\/api\/domains\/([a-f0-9]{16})(?:\/(plan|publish))?$/);
@@ -133,7 +140,7 @@ const server=http.createServer(async(req,res)=>{try{
   const testMatch=p.match(/^\/tunnel\/api\/routes\/([a-zA-Z0-9-]+)\/test$/);
   if(testMatch&&req.method==='POST'){const route=state.routes.find(r=>r.id===testMatch[1]);if(!route)fail('数据通道不存在',404);if(Object.keys(await body(req)).length)fail('测试仅使用当前线路配置');return json(res,202,{ok:true,test:routeChecks.create(route)});}
   const routeMatch=p.match(/^\/tunnel\/api\/routes\/([a-zA-Z0-9-]+)$/);
-  if(routeMatch){const i=state.routes.findIndex(r=>r.id===routeMatch[1]);if(i<0)fail('数据通道不存在',404);if(req.method==='PATCH'){const r=mutateRoute({...state.routes[i],...await body(req)},state.routes[i].id);state.version++;audit('更新数据通道',r.name+' · '+r.transport.toUpperCase()+' · '+(r.enabled?'启用':'暂停'));return json(res,200,{ok:true});}if(req.method==='DELETE'){if(state.domains?.some(b=>[b.mainlandRouteId,b.internationalRouteId].includes(routeMatch[1])))fail('请先处理绑定此线路的业务域名',409);const [r]=state.routes.splice(i,1);state.version++;audit('删除数据通道',r.name);return json(res,200,{ok:true});}}
+  if(routeMatch){const i=state.routes.findIndex(r=>r.id===routeMatch[1]);if(i<0)fail('数据通道不存在',404);if(['PATCH','DELETE'].includes(req.method)&&state.tunnels?.some(t=>t.mode==='bidirectional'&&t.routeIds.includes(routeMatch[1])))fail('请在双向隧道中统一修改两个方向',409);if(req.method==='PATCH'){const r=mutateRoute({...state.routes[i],...await body(req)},state.routes[i].id);state.version++;audit('更新数据通道',r.name+' · '+r.transport.toUpperCase()+' · '+(r.enabled?'启用':'暂停'));return json(res,200,{ok:true});}if(req.method==='DELETE'){if(state.domains?.some(b=>[b.mainlandRouteId,b.internationalRouteId].includes(routeMatch[1])))fail('请先处理绑定此线路的业务域名',409);const [r]=state.routes.splice(i,1);state.version++;audit('删除数据通道',r.name);return json(res,200,{ok:true});}}
   if(p===BASE+'/api/nodes'&&req.method==='POST'){
    const b=await body(req),isRelay=b.kind==='relay';if(state.nodes.length+state.relays.length>=64)fail('最多登记 64 个节点');const name=String(b.name||'').trim();if(!name||name.length>60)fail('请填写 1–60 字符的节点名称');
    const n={id:newId(isRelay?'relay':'node'),name,host:'',role:b.region==='mainland'?'国内接入':'国际接入',token:secret()};
@@ -142,7 +149,7 @@ const server=http.createServer(async(req,res)=>{try{
   }
   const nodeMatch=p.match(/^\/tunnel\/api\/nodes\/([a-zA-Z0-9-]+)$/);
   if(nodeMatch){const id=nodeMatch[1],relay=state.relays.find(n=>n.id===id),n=relay||state.nodes.find(n=>n.id===id);if(!n)fail('节点不存在',404);
-   if(req.method==='DELETE'){if(state.domains?.some(b=>state.routes.some(r=>r.source===id&&[b.mainlandRouteId,b.internationalRouteId].includes(r.id))))fail('请先处理绑定此节点的业务域名',409);const linked=state.routes.filter(r=>r.source===id||r.target===id||r.relayId===id),b=await body(req);if(linked.length&&!b.cascade)return json(res,409,{error:'节点被数据通道引用，请确认一并删除关联数据通道',routes:linked.map(r=>r.name)});state.routes=state.routes.filter(r=>!linked.includes(r));state.nodes=state.nodes.filter(x=>x.id!==id);state.relays=state.relays.filter(x=>x.id!==id);reports.delete(id);history.delete(id);state.version++;audit('删除节点',n.name+' · 撤销凭据并删除 '+linked.length+' 条关联数据通道');return json(res,200,{ok:true,deletedRoutes:linked.length});}
+   if(req.method==='DELETE'){if(state.domains?.some(b=>state.routes.some(r=>[r.source,r.target,r.relayId].includes(id)&&[b.mainlandRouteId,b.internationalRouteId].includes(r.id))))fail('请先处理绑定此节点的业务域名',409);const linked=state.routes.filter(r=>r.source===id||r.target===id||r.relayId===id),b=await body(req);if(linked.length&&!b.cascade)return json(res,409,{error:'节点被数据通道引用，请确认一并删除关联数据通道',routes:linked.map(r=>r.name)});state.routes=state.routes.filter(r=>!linked.includes(r));state.nodes=state.nodes.filter(x=>x.id!==id);state.relays=state.relays.filter(x=>x.id!==id);reports.delete(id);history.delete(id);state.version++;audit('删除节点',n.name+' · 撤销凭据并删除 '+linked.length+' 条关联数据通道');return json(res,200,{ok:true,deletedRoutes:linked.length});}
    if(req.method==='PATCH'){const b=await body(req);if(b.name!==undefined){const name=String(b.name).trim();if(!name||name.length>60)fail('节点名称应为 1–60 字符');n.name=name;}state.version++;audit('更新节点',n.name);return json(res,200,{ok:true});}
   }
   if(p===BASE+'/api/enrollment'&&req.method==='POST'){const b=await body(req),relay=state.relays.find(n=>n.id===b.id),n=relay||state.nodes.find(n=>n.id===b.id);if(!n)fail('节点不存在',404);return json(res,200,enrollment(n,!!relay));}
