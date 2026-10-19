@@ -35,7 +35,9 @@ function client(config,fetcher=fetch){
 function inspectTLS(node,name){
  if(net.isIP(node.host)!==4||/^(127|10|0|169\.254|192\.168)\.|^172\.(1[6-9]|2\d|3[01])\./.test(node.host))fail('节点公网 IPv4 尚未就绪');
  return new Promise((resolve,reject)=>{
-  const req=https.request({hostname:name,servername:name,port:443,path:'/',method:'HEAD',family:4,autoSelectFamily:false,signal:AbortSignal.timeout(8000),minVersion:'TLSv1.3',rejectUnauthorized:true,lookup:(_host,_options,callback)=>callback(null,node.host,4)},res=>res.resume());
+  // A shared HTTPS agent pools by hostname, not this fixed-IP lookup. Disable
+  // pooling and session reuse so each region is checked on its own connection.
+  const req=https.request({agent:false,hostname:name,servername:name,port:443,path:'/',method:'HEAD',family:4,autoSelectFamily:false,signal:AbortSignal.timeout(8000),minVersion:'TLSv1.3',rejectUnauthorized:true,lookup:(_host,_options,callback)=>callback(null,node.host,4)},res=>res.resume());
   req.on('socket',socket=>socket.once('secureConnect',()=>{try{const cert=new crypto.X509Certificate(socket.getPeerCertificate().raw);if(!cert.checkHost(name)||Date.parse(cert.validTo)<Date.now()+86400000)throw Error();resolve({nodeId:node.id,host:node.host,dnsNames:cert.subjectAltName,notAfter:new Date(cert.validTo).toISOString(),fingerprint:cert.fingerprint256});req.destroy();}catch{reject(Object.assign(Error('节点证书未覆盖业务域名或即将到期'),{status:400}));req.destroy();}}));
   req.on('error',()=>reject(Object.assign(Error('节点 HTTPS 或证书验证失败：'+node.name),{status:400})));req.setTimeout(8000,()=>req.destroy());req.end();
  });
