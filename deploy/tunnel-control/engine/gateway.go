@@ -196,7 +196,8 @@ type DataGatewayConfig struct {
 }
 
 func (e *Engine) dataGatewayHandler(fallback http.Handler) (http.Handler, *tls.Certificate, error) {
-	cfg := e.config().DataGateway
+	nodeConfig := e.config()
+	cfg := nodeConfig.DataGateway
 	if cfg == nil {
 		return fallback, nil, nil
 	}
@@ -233,7 +234,17 @@ func (e *Engine) dataGatewayHandler(fallback http.Handler) (http.Handler, *tls.C
 	}
 	local := &http.Server{Handler: egress, ReadHeaderTimeout: 8 * time.Second, ReadTimeout: 300 * time.Second, WriteTimeout: 300 * time.Second, IdleTimeout: 45 * time.Second, MaxHeaderBytes: 16 << 10}
 	go local.Serve(listener)
+	return gatewayMux(cfg, nodeConfig.Path, ingress, fallback), &certificate, nil
+}
+
+// A business SNI may also carry the authenticated tunnel protocol. Only its
+// exact reserved path is delegated; PSK/replay/node checks remain in fallback.
+func gatewayMux(cfg *DataGatewayConfig, protocolPath string, ingress, fallback http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if protocolPath != "" && r.URL.Path == protocolPath {
+			fallback.ServeHTTP(w, r)
+			return
+		}
 		if r.TLS == nil || r.TLS.ServerName != cfg.Domain {
 			fallback.ServeHTTP(w, r)
 			return
@@ -261,5 +272,5 @@ func (e *Engine) dataGatewayHandler(fallback http.Handler) (http.Handler, *tls.C
 			return
 		}
 		ingress.ServeHTTP(w, r)
-	}), &certificate, nil
+	})
 }

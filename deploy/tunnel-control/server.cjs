@@ -10,7 +10,8 @@ const stateFile=path.join(DATA,'state.json'),secret=()=>crypto.randomBytes(32).t
 let state=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):{version:1,relays:[{id:'relay-hk',name:'香港优化节点',host:'47.243.148.109',port:443,serverName:DEFAULT_SNI,path:'/api/v1/chitanda-bridge',psk:crypto.randomBytes(32).toString('base64'),token:secret()}],nodes:[{id:'mainland',name:'中国大陆',host:'110.42.32.161',role:'国内接入',token:secret()},{id:'international',name:'国际业务节点',host:'23.145.248.44',role:'国际接入',token:secret()}],routes:[],events:[]};
 const reports=new Map(),history=new Map(),sessions=new Map();
 const systemSettings=require('./settings.cjs');state.settings=systemSettings.read(state.settings);
-const save=()=>{fs.writeFileSync(stateFile+'.tmp',JSON.stringify(state,null,2),{mode:0o600});fs.renameSync(stateFile+'.tmp',stateFile);};
+let deferSave=false;
+const save=()=>{if(deferSave)return;fs.writeFileSync(stateFile+'.tmp',JSON.stringify(state,null,2),{mode:0o600});fs.renameSync(stateFile+'.tmp',stateFile);};
 const audit=(action,detail)=>{state.events.unshift({id:crypto.randomUUID(),at:new Date().toISOString(),action,detail});state.events=state.events.slice(0,150);save();};
 const equal=(a,b)=>{a=Buffer.from(String(a||''));b=Buffer.from(String(b||''));return a.length===b.length&&crypto.timingSafeEqual(a,b);};
 const fail=(message,status=400)=>{throw Object.assign(Error(message),{status});};
@@ -68,7 +69,25 @@ function validateRoute(input,id){
  if(state.routes.some(r=>r.id!==id&&r.source===source.id&&r.listenPort===listenPort))fail('源节点上的监听端口已被使用',409);
  const name=String(input.name||'').trim(),transport=input.transport||'h2';if(!name||name.length>60)fail('线路名称应为 1–60 字符');if(!['h2','h3','stream'].includes(transport))fail('数据协议仅支持 H2、H3 或 Stream');if(input.tlsVerify===false)fail('TLS 证书验证必须启用');
  if(id&&state.domains?.some(b=>[b.mainlandRouteId,b.internationalRouteId].includes(id))&&state.routes.find(r=>r.id===id)?.source!==source.id)fail('已绑定域名的线路不能直接更换源节点',409);
- return {id:id||crypto.randomUUID(),name,source:source.id,target:target.id,relayId:relay.id,transport,serverName:transport==='stream'?'':domain(input.serverName||relay.serverName),tlsVerify:true,listenPort,targetPort,enabled:input.enabled!==false,createdAt:new Date().toISOString()};
+ return {id:id||crypto.randomUUID(),name,source:source.id,target:target.id,relayId:relay.id,transport,serverName:transport==='stream'?'':domain(input.serverName||tunnelModel.defaultServerName(state,input,id)||relay.serverName),tlsVerify:true,listenPort,targetPort,enabled:input.enabled!==false,createdAt:new Date().toISOString()};
+}
+async function writeTunnel(input,id){
+ const before=structuredClone(state);let tunnel,binding;
+ deferSave=true;
+ try{
+  tunnel=tunnelManager.write(input,id);
+  if(input.businessDomain){
+   const requested=require('./domains.cjs').fqdn(input.businessDomain);
+   binding=(state.domains||[]).find(b=>b.tunnelId===tunnel.id&&b.domain===requested);
+   if(!binding)binding=domains.create({tunnelId:tunnel.id,domain:requested,ttl:input.domainTTL||60});
+  }
+ }catch(e){state=before;throw e;}finally{deferSave=false;}
+ save();
+ if(binding&&input.publishDNS===true&&binding.status!=='published'){
+  try{const p=await domains.preview(binding.id);await domains.publish(binding.id,p.fingerprint);return {ok:true,tunnel,binding,dns:{published:true}};}
+  catch(e){binding.lastError=e.message;audit('域名发布待处理',binding.domain+' · '+e.message);return {ok:true,tunnel,binding,dns:{published:false,error:e.message}};}
+ }
+ return {ok:true,tunnel,binding};
 }
 function mutateRoute(input,id){const candidate=validateRoute(input,id),old=state.routes,index=old.findIndex(r=>r.id===id);state.routes=index>=0?old.map((r,i)=>i===index?{...candidate,createdAt:r.createdAt}:r):[...old,candidate];try{ensureCertificate(state.relays.find(r=>r.id===candidate.relayId));}catch(e){state.routes=old;throw e;}return candidate;}
 function enrollment(n,relay){audit('获取接入配置',n.name);return {controller:process.env.CT_CONTROLLER_URL||'https://datahub.chitanda.net',controllerAddress:'110.42.32.161:443',id:n.id,token:n.token,role:relay?'relay':'agent',ca:state.ca};}
@@ -125,10 +144,10 @@ const server=http.createServer(async(req,res)=>{try{
   }
   if(p===BASE+'/api/state'&&req.method==='GET')return json(res,200,snapshot());
   if(domains.isBusy()&&/\/api\/(tunnels|routes|nodes)(\/|$)/.test(p)&&!['GET','HEAD'].includes(req.method))fail('DNS 正在发布，请稍后修改隧道或节点',409);
-  if(p===BASE+'/api/tunnels'&&req.method==='POST')return json(res,201,{ok:true,tunnel:tunnelManager.write(await body(req))});
+  if(p===BASE+'/api/tunnels'&&req.method==='POST')return json(res,201,await writeTunnel(await body(req)));
   if(p===BASE+'/api/tunnels/merge'&&req.method==='POST')return json(res,200,{ok:true,tunnel:tunnelManager.merge(await body(req))});
   const tunnelMatch=p.match(/^\/tunnel\/api\/tunnels\/([a-zA-Z0-9-]+)$/);
-  if(tunnelMatch){const id=tunnelMatch[1];if(req.method==='PATCH')return json(res,200,{ok:true,tunnel:tunnelManager.write(await body(req),id)});if(req.method==='DELETE'){await body(req);tunnelManager.remove(id);return json(res,200,{ok:true});}}
+  if(tunnelMatch){const id=tunnelMatch[1];if(req.method==='PATCH')return json(res,200,await writeTunnel(await body(req),id));if(req.method==='DELETE'){await body(req);tunnelManager.remove(id);return json(res,200,{ok:true});}}
   if(p===BASE+'/api/dns-provider'&&req.method==='PUT')return json(res,200,await domains.configure(await body(req)));
   if(p===BASE+'/api/domains'&&req.method==='POST')return json(res,201,{binding:domains.create(await body(req))});
   const domainMatch=p.match(/^\/tunnel\/api\/domains\/([a-f0-9]{16})(?:\/(plan|publish))?$/);

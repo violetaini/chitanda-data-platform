@@ -63,3 +63,8 @@ module.exports=function({getState,validateRoute,ensureCertificates,audit}){
  return {get,write,remove,merge};
 };
 module.exports.normalize=normalize;
+module.exports.defaultServerName=(state,input,routeId)=>{
+ const tunnel=routeId&&state.tunnels?.find(t=>t.routeIds.includes(routeId));
+ const binding=routeId&&(state.domains||[]).find(b=>tunnel&&b.tunnelId===tunnel.id||[b.mainlandRouteId,b.internationalRouteId].includes(routeId));
+ return String(input.businessDomain||binding?.domain||[...state.nodes,...state.relays].find(n=>n.id===input.source)?.ingress?.domain||'').trim();
+};

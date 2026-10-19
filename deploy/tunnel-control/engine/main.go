@@ -27,7 +27,7 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.7.0"
+const version = "2.7.1"
 
 type Route struct {
 	RelayID    string `json:"relayId"`

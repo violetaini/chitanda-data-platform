@@ -66,6 +66,7 @@ func TestRealH2H3AndSNICertificate(t *testing.T) {
 	defer replays.Close()
 	app := server.NewServer("/api/v1/transit-test", psk, replays, http.NotFoundHandler(), 0)
 	app.SetDialTargetForTest(e.brokerConnection)
+	mux := gatewayMux(&DataGatewayConfig{Domain: "control.chitanda.net"}, "/api/v1/transit-test", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "business path", 403) }), app)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -73,14 +74,14 @@ func TestRealH2H3AndSNICertificate(t *testing.T) {
 	var served atomic.Pointer[tls.Certificate]
 	served.Store(&certificate)
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return served.Load(), nil }}
-	h2 := &http.Server{Handler: app, TLSConfig: tlsConfig.Clone()}
+	h2 := &http.Server{Handler: mux, TLSConfig: tlsConfig.Clone()}
 	go h2.ServeTLS(ln, "", "")
 	defer h2.Close()
 	udp, err := net.ListenPacket("udp", ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	h3 := server.NewHTTP3Server(app, tlsConfig.Clone(), 1252)
+	h3 := server.NewHTTP3Server(mux, tlsConfig.Clone(), 1252)
 	go h3.Serve(udp)
 	defer h3.Close()
 	for _, protocol := range []string{"h2", "h3"} {
