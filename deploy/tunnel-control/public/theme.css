@@ -249,3 +249,6 @@ label{font-size:15px}input,select,.certificate-settings textarea{font-size:16px}
 }
 
 .workspace{gap:7px;padding-inline:10px}.workspace-logo{width:28px;padding:5px;flex-shrink:0}.workspace>div{min-width:0;white-space:nowrap;font-size:13px;letter-spacing:0}.workspace small{font-size:11px;letter-spacing:0;overflow:hidden;text-overflow:ellipsis}.workspace-badge{font-size:10px;letter-spacing:.3px;margin-left:auto}
+
+/* Per-tunnel automatic DNS status. */
+.domain-address-status{overflow-wrap:anywhere}.domain-address-status svg{display:inline-block;width:15px;height:15px;vertical-align:-3px;margin-right:7px}.domain-address-status.has-error{color:var(--red)}

@@ -33,17 +33,17 @@ const {createAdminPasswordHash}=require('../deploy/tunnel-control/password-auth.
   const agent=page.locator('[data-node-card=mainland]'),relay=page.locator('[data-node-card=relay-hk]');
   for(const width of [1440,1024,390]){
    await page.setViewportSize({width,height:1050});await page.evaluate(()=>refresh());
-   check(await agent.locator('[data-node-field=ingress]').innerText().then(s=>s.includes('https://domestic-business.example')),'domestic business entry is derived from node configuration');
-   check(await relay.locator('[data-node-field=ingress]').innerText().then(s=>s.includes('https://observed-business.example')),'relay business entry is derived from configuration');
+   check(await agent.locator('[data-node-field=ingress]').count()===0,'node cards omit tunnel-owned business entries');
+   check(await relay.locator('[data-node-field=ingress]').count()===0,'relay cards omit tunnel-owned business entries');
    check(await agent.locator('.node-tls,[data-node-field=sni],[data-node-field=tls]').count()===0,'node cards omit TLS and SNI details');
    check(JSON.stringify(await agent.locator('.node-metrics [data-node-field]').evaluateAll(xs=>xs.map(x=>x.dataset.nodeField)))===JSON.stringify(await relay.locator('.node-metrics [data-node-field]').evaluateAll(xs=>xs.map(x=>x.dataset.nodeField))),'same metrics and ordering');
    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'no horizontal overflow');
    if(width>=1024){const a=await agent.locator('.node-card-footer').boundingBox(),b=await relay.locator('.node-card-footer').boundingBox();check(Math.abs(a.y-b.y)<1,'card actions align');}
    const output=path.resolve('tmp/node-cards-qa');fs.mkdirSync(output,{recursive:true});await page.screenshot({path:path.join(output,`nodes-${width}.png`),fullPage:true});
   }
-  mode='unreported';await page.evaluate(()=>refresh());check((await agent.locator('[data-node-field=ingress]').innerText()).includes('未配置'),'no fabricated business entry');
+  mode='unreported';await page.evaluate(()=>refresh());check(await agent.locator('[data-node-field=ingress]').count()===0,'no node-level entry placeholder');
   mode='multiple';await page.evaluate(()=>refresh());check(await page.locator('[data-node-card]').count()===3,'arbitrary added nodes automatically render');
   await page.locator('nav [data-view=settings]').click();check((await page.locator('.certificate-observations').textContent()).includes('alternate.chitanda.net'),'certificate details are centralized in system settings');
-  check(errors.length===0,'browser errors: '+errors.join(';'));console.log(`PASS ${count} node-card checks: concise cards, discovered HTTPS entries, centralized certificate observations and multiple nodes.`);
+  check(errors.length===0,'browser errors: '+errors.join(';'));console.log(`PASS ${count} node-card checks: concise cards, tunnel-owned HTTPS entries, centralized certificate observations and multiple nodes.`);
  }finally{if(browser)await browser.close();if(child)await new Promise(resolve=>{child.once('exit',resolve);child.kill();});fs.rmSync(directory,{recursive:true,force:true});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

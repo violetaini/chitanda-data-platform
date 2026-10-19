@@ -43,6 +43,8 @@ for(const r of state.relays)ensureCertificate(r);save();
 const report=id=>{const r=reports.get(id);return r?{...r,online:Date.now()-r.seen<50000}:{online:false};};
 const routeChecks=require('./route-tests.cjs')({getState:()=>state,getReport:report,getSettings:()=>state.settings.routeChecks,storageFile:path.join(DATA,'route-checks.json')});
 const domains=require('./domains.cjs')({dataDir:DATA,getState:()=>state,save,audit});
+const dnsAddressSync=require('./dns-address-sync.cjs')({getState:()=>state,syncAddresses:domains.syncAddresses,isBusy:domains.isBusy,save,audit});
+setInterval(()=>{dnsAddressSync.tick().catch(()=>console.error('DNS address maintenance failed'));},5000).unref();
 const tunnelManager=tunnelModel({getState:()=>state,validateRoute,ensureCertificates:()=>{for(const r of state.relays)ensureCertificate(r);},audit});
 setInterval(()=>{try{routeChecks.tick();}catch{console.error('route check scheduling failed');}},5000).unref();
 const linkKey=r=>[r.relayId,r.transport,r.serverName].join('|');
@@ -105,7 +107,10 @@ const server=http.createServer(async(req,res)=>{try{
  if(p==='/transit-node/sync'&&req.method==='POST'){
   const id=req.headers['x-node-id'],token=String(req.headers.authorization||'').replace(/^Bearer /,''),item=[...state.relays,...state.nodes].find(n=>n.id===id);
   if(!item||!equal(token,item.token))return json(res,401,{error:'节点认证失败'});
-  const data=await body(req);if(data.ingress&&typeof data.ingress.domain==='string'&&net.isIP(data.ingress.domain)===0&&/^[a-z0-9.-]{1,253}$/.test(data.ingress.domain)&&data.ingress.domain.includes('.')){const ingress={domain:domain(data.ingress.domain),port:443};if(JSON.stringify(item.ingress)!==JSON.stringify(ingress)){item.ingress=ingress;save();}}if(publicIP(clientIP)&&item.host!==clientIP){item.host=clientIP;state.version++;audit('识别节点地址',item.name+' · '+clientIP);}
+  const data=await body(req);if(!domains.isBusy()){
+   if(data.ingress&&typeof data.ingress.domain==='string'&&net.isIP(data.ingress.domain)===0&&/^[a-z0-9.-]{1,253}$/.test(data.ingress.domain)&&data.ingress.domain.includes('.')){const ingress={domain:domain(data.ingress.domain),port:443};if(JSON.stringify(item.ingress)!==JSON.stringify(ingress)){item.ingress=ingress;save();}}
+   if(publicIP(clientIP)&&item.host!==clientIP){item.host=clientIP;state.version++;audit('识别节点地址',item.name+' · '+clientIP);}
+  }
   const r={seen:Date.now()},finite=n=>Number.isFinite(Number(n))&&Number(n)>=0?Math.min(Number(n),1e18):0;
   for(const k of ['uptime','memory','goroutines','rx','tx','active','connections','latency','revision'])if(k in data)r[k]=finite(data[k]);
   r.revision=Math.min(state.version,Math.floor(r.revision||0));r.version=String(data.version||'').slice(0,40);

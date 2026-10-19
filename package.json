@@ -1,6 +1,6 @@
 {
   "name": "chitanda-data-platform-workspace",
-  "version": "2.9.1",
+  "version": "2.10.0",
   "private": true,
   "description": "Chitanda 数据中台管理：控制面板、轻量节点及 HTTPS 数据接入",
   "engines": {
@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "start": "node --env-file-if-exists=.env.local deploy/tunnel-control/server.cjs",
-    "test": "node --test scripts/tunnel-control-security.test.cjs scripts/route-tests.test.cjs scripts/domains.test.cjs scripts/tunnels.test.cjs",
+    "test": "node --test scripts/tunnel-control-security.test.cjs scripts/route-tests.test.cjs scripts/domains.test.cjs scripts/dns-address-sync.test.cjs scripts/tunnels.test.cjs",
     "test:gateway": "go -C deploy/tunnel-control/gateway test ./...",
     "test:ui": "node scripts/tunnel-control-account-smoke.cjs && node scripts/tunnel-control-dashboard-smoke.cjs && node scripts/tunnel-control-node-cards-smoke.cjs && node scripts/tunnel-control-route-test-smoke.cjs && node scripts/tunnel-control-settings-smoke.cjs && node scripts/tunnel-model-smoke.cjs",
     "build:engine": "powershell -NoProfile -File deploy/tunnel-control/build-engine.ps1"

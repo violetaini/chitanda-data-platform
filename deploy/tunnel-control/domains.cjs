@@ -49,8 +49,8 @@ module.exports=function({dataDir,getState,save,audit,probe=inspectTLS,makeClient
  const config=()=>fs.existsSync(file)?providerInput(JSON.parse(fs.readFileSync(file,'utf8'))):null;
  const getBinding=id=>{const b=(getState().domains||[]).find(v=>v.id===id);if(!b)fail('域名绑定不存在',404);return b;};
  function tunnel(binding){const t=getState().tunnels?.find(t=>t.id===binding.tunnelId);if(!t)fail('域名绑定的隧道不存在',409);return t;}
- function routes(binding){const s=getState(),nodes=[...s.nodes,...s.relays],t=tunnel(binding);if(t.routeIds.length!==(t.mode==='bidirectional'?2:1))fail('隧道方向配置不完整',409);const rs=t.routeIds.map(id=>{const r=s.routes.find(r=>r.id===id),node=nodes.find(n=>n.id===r?.source);if(!r||!r.enabled||!node?.ingress||!net.isIP(node.host))fail('域名绑定的线路或 HTTPS 入口尚未就绪',409);if(node.ingress.domain!==binding.domain)fail('业务域名须与入口已部署的 HTTPS / SSL 域名一致',409);return {route:r,node};});if(t.mode==='bidirectional'&&(rs[0].route.source!==rs[1].route.target||rs[0].route.target!==rs[1].route.source||rs[0].node.id===rs[1].node.id))fail('双向隧道的节点须互为反向',409);return rs;}
- function summary(){const c=config(),s=getState();return {configured:!!c,...(c?{baseURL:c.baseURL,uid:c.uid,zoneId:c.zoneId,zone:c.zone}:{}),bindings:(s.domains||[]).map(b=>{const t=s.tunnels?.find(t=>t.id===b.tunnelId);return {...b,mode:t?.mode,regions:(t?.routeIds||[]).map((id,i)=>{const r=s.routes.find(r=>r.id===id),n=[...s.nodes,...s.relays].find(n=>n.id===r?.source);return {region:t.mode==='single'?'全部地区':i?'国际 / 境外':'国内 / 默认',routeId:r?.id,nodeId:n?.id,nodeName:n?.name,host:n?.host};})};})};}
+ function routes(binding,allowDisabled=false){const s=getState(),nodes=[...s.nodes,...s.relays],t=tunnel(binding);if(t.routeIds.length!==(t.mode==='bidirectional'?2:1))fail('隧道方向配置不完整',409);const rs=t.routeIds.map(id=>{const r=s.routes.find(r=>r.id===id),node=nodes.find(n=>n.id===r?.source);if(!r||(!allowDisabled&&!r.enabled)||!node?.ingress||!net.isIP(node.host))fail('域名绑定的线路或 HTTPS 入口尚未就绪',409);if(node.ingress.domain!==binding.domain)fail('业务域名须与入口已部署的 HTTPS / SSL 域名一致',409);return {route:r,node};});if(t.mode==='bidirectional'&&(rs[0].route.source!==rs[1].route.target||rs[0].route.target!==rs[1].route.source||rs[0].node.id===rs[1].node.id))fail('双向隧道的节点须互为反向',409);return rs;}
+ function summary(){const c=config(),s=getState();return {configured:!!c,...(c?{baseURL:c.baseURL,uid:c.uid,zoneId:c.zoneId,zone:c.zone}:{}),bindings:(s.domains||[]).map(b=>{const t=s.tunnels?.find(t=>t.id===b.tunnelId);return {...b,addressSync:require('./dns-address-sync.cjs').summary(s,b),mode:t?.mode,regions:(t?.routeIds||[]).map((id,i)=>{const r=s.routes.find(r=>r.id===id),n=[...s.nodes,...s.relays].find(n=>n.id===r?.source);return {region:t.mode==='single'?'全部地区':i?'国际 / 境外':'国内 / 默认',routeId:r?.id,nodeId:n?.id,nodeName:n?.name,host:n?.host};})};})};}
  async function configure(input){if(busy)fail('DNS 正在发布，请稍后再修改连接',409);busy=true;try{const previous=config()||{},next=providerInput(input,previous);if((getState().domains||[]).length&&previous.zone&&(next.zone!==previous.zone||next.zoneId!==previous.zoneId||next.baseURL!==previous.baseURL))fail('已有域名绑定时不能切换 DNS 区域或服务',409);await makeClient(next).zone();writePrivate(file,next);audit('接入 DNS 管理',next.baseURL+' · '+next.zone);return summary();}finally{busy=false;}}
  function create(input){if(busy)fail('DNS 正在发布，请稍后绑定',409);const c=config();if(!c)fail('请先接入 DNS 管理');const domain=fqdn(input.domain);if(!domain.endsWith('.'+c.zone)||domain===c.zone)fail('业务域名须为接入区域下的子域名');if((getState().domains||[]).some(b=>b.domain===domain))fail('该业务域名已绑定',409);if((getState().domains||[]).length>=64)fail('最多配置 64 个业务域名');const id=crypto.randomBytes(8).toString('hex'),ttl=Number(input.ttl??1);if(!Number.isInteger(ttl)||ttl<1||ttl>3600)fail('TTL 应为 1–3600 秒');const b={id,domain,cname:'ct-'+id+'.tunnel.'+c.zone,tunnelId:String(input.tunnelId||''),ttl,status:'draft',createdAt:new Date().toISOString()};const rs=routes(b);b.mainlandRouteId=rs[0].route.id;if(rs[1])b.internationalRouteId=rs[1].route.id;getState().domains||=[];getState().domains.push(b);audit('绑定业务域名',domain);return b;}
  function updateTTL(id,input){
@@ -59,44 +59,58 @@ module.exports=function({dataDir,getState,save,audit,probe=inspectTLS,makeClient
   if(binding.ttl!==ttl){if(binding.status==='published')binding.publishedTTL??=binding.ttl;binding.ttl=ttl;if(binding.status==='published')binding.pendingTTL=ttl!==binding.publishedTTL;plans.delete(id);audit('更新域名 TTL',binding.domain+' · '+ttl+' 秒');}
   return binding;
  }
- async function plan(id){
-  const binding=getBinding(id),c=config();if(!c)fail('DNS 管理尚未配置');const api=makeClient(c),rs=routes(binding),zone=await api.zone();if(binding.ttl<zone.minTTL)fail('TTL 小于 DNS 区域最低要求');
+ async function plan(id,addressesOnly=false){
+  const binding=getBinding(id),c=config();if(!c)fail('DNS 管理尚未配置');if(addressesOnly&&binding.status!=='published')fail('仅自动更新已发布的域名',409);
+  const api=makeClient(c),rs=routes(binding,addressesOnly),targetKey=()=>digest(routes(binding,addressesOnly).map(({route,node})=>[route.id,node.id,node.host,node.ingress.domain])),targets=targetKey(),zone=await api.zone();if(!addressesOnly&&binding.ttl<zone.minTTL)fail('TTL 小于 DNS 区域最低要求');
   const certificate=await Promise.all(rs.map(({node})=>probe(node,binding.domain)));
   const names=[binding.domain,binding.cname],current=(await Promise.all(names.map(n=>api.records(n)))).flat();
-  const marker='Chitanda datahub '+binding.id,desired=[{Name:api.relative(binding.domain),Type:'CNAME',Value:[binding.cname],Line:'default_view',TTL:binding.ttl,Status:'1',Weight:1,Remark:marker},...rs.map(({node},i)=>({Name:api.relative(binding.cname),Type:'A',Value:[node.host],Line:i?'Abroad':'default_view',TTL:binding.ttl,Status:'1',Weight:1,Remark:marker}))];
+  if(targetKey()!==targets)fail('节点地址已变化，请重试 DNS 校验',409);
+  const marker='Chitanda datahub '+binding.id;let desired=[{Name:api.relative(binding.domain),Type:'CNAME',Value:[binding.cname],Line:'default_view',TTL:binding.ttl,Status:'1',Weight:1,Remark:marker},...rs.map(({node},i)=>({Name:api.relative(binding.cname),Type:'A',Value:[node.host],Line:i?'Abroad':'default_view',TTL:binding.ttl,Status:'1',Weight:1,Remark:marker}))];
+  if(addressesOnly){
+   // Automatic maintenance owns addresses only. Never adopt, recreate, enable,
+   // change TTLs, or replace a hostname that somebody has edited elsewhere.
+   if(current.length!==desired.length||current.some(r=>r.Remark!==marker))fail('自动更新暂停：解析记录数量或归属已变化，请人工核对',409);
+   desired=desired.map(d=>{const matches=current.filter(r=>r.Name===d.Name&&r.Type===d.Type&&r.Line===d.Line);if(matches.length!==1||String(matches[0].Status)!=='1')fail('自动更新暂停：解析记录类型、地区或启用状态已变化',409);const old=matches[0];if(d.Type==='CNAME'&&!recordsEqual({...old,Value:d.Value},old))fail('自动更新暂停：业务 CNAME 已变化',409);return {...old,Value:d.Value};});
+  }
   for(const r of current){const own=r.Remark===marker,adopt=binding.status==='draft'&&r.Name===api.relative(binding.domain)&&r.Type==='A'&&['default_view','Abroad'].includes(r.Line)&&String(r.Status)==='1'&&(Array.isArray(r.Value)?r.Value:[r.Value]).every(ip=>rs[rs.length===2&&r.Line==='Abroad'?1:0].node.host===ip);if(!own&&!adopt)fail('发现未由此绑定管理的 DNS 记录，拒绝覆盖：'+r.Name+' / '+r.Type,409);}
   const slot=(a,b)=>a.Name===b.Name&&a.Type===b.Type&&a.Line===b.Line;
   const remove=current.filter(r=>!desired.some(d=>slot(r,d))),add=desired.filter(d=>!current.some(r=>slot(r,d))),updates=desired.flatMap(next=>{const previous=current.find(r=>slot(r,next));return previous&&!recordsEqual(previous,next)?[{next,previous}]:[];}),fingerprint=digest({current:current.map(r=>({id:r.RecordId,...recordShape(r)})).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),desired});
-  const result={bindingId:id,domain:binding.domain,cname:binding.cname,certificate,records:desired,changes:{remove:remove.map(recordShape),add:add.map(recordShape),update:updates.map(v=>({from:recordShape(v.previous),to:recordShape(v.next)}))},fingerprint};plans.set(id,{fingerprint,until:Date.now()+300000});return {result,api,current,remove,add,updates,binding};
+  const result={bindingId:id,domain:binding.domain,cname:binding.cname,certificate,records:desired,changes:{remove:remove.map(recordShape),add:add.map(recordShape),update:updates.map(v=>({from:recordShape(v.previous),to:recordShape(v.next)}))},fingerprint};if(!addressesOnly)plans.set(id,{fingerprint,until:Date.now()+300000});return {result,api,current,remove,add,updates,binding};
  }
- async function publish(id,fingerprint){
-  if(busy)fail('另一项 DNS 发布正在执行',409);const approved=plans.get(id);if(!approved||approved.until<Date.now()||approved.fingerprint!==fingerprint)fail('请先预览最新 DNS 变更',409);busy=true;let work;
-  try{work=await plan(id);if(work.result.fingerprint!==fingerprint)fail('DNS 记录或节点已变化，请重新预览',409);
+ async function publish(id,fingerprint,addressesOnly=false){
+  if(busy)fail('另一项 DNS 发布正在执行',409);const approved=plans.get(id);if(!addressesOnly&&(!approved||approved.until<Date.now()||approved.fingerprint!==fingerprint))fail('请先预览最新 DNS 变更',409);busy=true;let work;
+  try{work=await plan(id,addressesOnly);if(!addressesOnly&&work.result.fingerprint!==fingerprint)fail('DNS 记录或节点已变化，请重新预览',409);
+   if(addressesOnly&&!work.updates.length)return work.result;
    const {api,binding,remove,add,updates}=work,removed=[],added=[],updated=[];const backup=path.join(dataDir,'dns-backup-'+id+'-'+Date.now()+'.json');writePrivate(backup,{domain:binding.domain,cname:binding.cname,records:work.current});
    try{
     // Make regional targets available before replacing the business hostname.
     for(const r of add.filter(r=>r.Type==='A')){await api.add(r);added.push(r);}
-    for(const u of updates){await api.update(u.next,u.previous);updated.push(u);}
+    for(const u of updates){if(addressesOnly){const fresh=(await api.records(binding.cname)).find(r=>r.RecordId===u.previous.RecordId);if(!fresh||fresh.Remark!==u.previous.Remark||!recordsEqual(fresh,u.previous))throw Error('concurrent DNS change');}await api.update(u.next,u.previous);updated.push(u);}
     for(const r of remove){await api.remove(r);removed.push(r);}
     for(const r of add.filter(r=>r.Type!=='A')){await api.add(r);added.push(r);}
-    const actual=(await Promise.all([binding.domain,binding.cname].map(n=>api.records(n)))).flat();if(actual.length!==work.result.records.length||!work.result.records.every(d=>actual.some(r=>recordsEqual(r,d))))throw Error('verification failed');
+    const actual=(await Promise.all([binding.domain,binding.cname].map(n=>api.records(n)))).flat();if(actual.length!==work.result.records.length||!work.result.records.every(d=>actual.some(r=>recordsEqual(r,d)&&(!addressesOnly||r.Remark===d.Remark))))throw Error('verification failed');
    }catch{
     // Reconcile against the snapshot even if the provider committed a request
     // whose response was lost. A client-side success journal alone is unsafe.
     let restored=true;try{
+     if(addressesOnly){
+      for(const u of updates){const fresh=(await api.records(binding.cname)).find(r=>r.RecordId===u.previous.RecordId);if(!fresh||fresh.Remark!==u.previous.Remark)throw Error('record ownership changed');if(recordsEqual(fresh,u.previous))continue;if(!recordsEqual(fresh,u.next))throw Error('address edited elsewhere');await api.update(u.previous,fresh);}
+      const after=(await Promise.all([binding.domain,binding.cname].map(n=>api.records(n)))).flat();restored=after.length===work.current.length&&work.current.every(old=>after.some(r=>r.RecordId===old.RecordId&&r.Remark===old.Remark&&recordsEqual(r,old)));
+     }else{
      const sameSlot=(a,b)=>a.Name===b.Name&&a.Type===b.Type&&a.Line===b.Line;
      let now=(await Promise.all([binding.domain,binding.cname].map(n=>api.records(n)))).flat();
      for(const r of now.filter(r=>r.Remark==='Chitanda datahub '+id&&!work.current.some(old=>sameSlot(old,r))))await api.remove(r);
      now=(await Promise.all([binding.domain,binding.cname].map(n=>api.records(n)))).flat();
-     for(const old of work.current){const current=now.find(r=>sameSlot(old,r));if(!current)await api.add(old);else if(!recordsEqual(old,current)){if(current.RecordId!==old.RecordId&&current.Remark!=='Chitanda datahub '+id)throw Error('concurrent change');await api.update(old,current);}}
+     for(const old of work.current){const current=now.find(r=>sameSlot(old,r));if(!current)await api.add(old);else if(!recordsEqual(old,current)){if(current.Remark!==old.Remark||current.RecordId!==old.RecordId&&current.Remark!=='Chitanda datahub '+id)throw Error('concurrent change');await api.update(old,current);}}
      const after=(await Promise.all([binding.domain,binding.cname].map(n=>api.records(n)))).flat();restored=after.length===work.current.length&&work.current.every(r=>after.some(n=>recordsEqual(r,n)));
+     }
     }catch{restored=false;}
-    binding.lastError=restored?'发布未完成，已恢复原解析':'发布及回退未完成，请检查 DNS 备份';save();fail(binding.lastError,502);
+    const message=restored?'发布未完成，已恢复原解析':'发布及回退未完成，请检查 DNS 备份';if(!addressesOnly){binding.lastError=message;save();}fail(message,502);
    }
-   binding.status='published';binding.publishedTTL=binding.ttl;delete binding.pendingTTL;binding.publishedAt=new Date().toISOString();binding.lastCertificateCheck=work.result.certificate;delete binding.lastError;plans.delete(id);audit('发布域名解析',binding.domain+' → '+binding.cname);return work.result;
+   if(!addressesOnly){binding.status='published';binding.publishedTTL=binding.ttl;delete binding.pendingTTL;binding.publishedAt=new Date().toISOString();delete binding.lastError;}binding.lastCertificateCheck=work.result.certificate;plans.delete(id);audit(addressesOnly?'自动更新节点解析':'发布域名解析',binding.domain+' → '+(addressesOnly?work.result.records.filter(r=>r.Type==='A').map(r=>r.Value.join(',')).join(' / '):binding.cname));return work.result;
   }finally{busy=false;}
  }
  function remove(id){const b=getBinding(id);if(b.status==='published')fail('已发布域名保留接入记录，避免误删生产解析',409);getState().domains=getState().domains.filter(v=>v.id!==id);plans.delete(id);audit('移除域名草稿',b.domain);}
- return {summary,configure,create,updateTTL,preview:async id=>(await plan(id)).result,publish,remove,isBusy:()=>busy};
+ return {summary,configure,create,updateTTL,preview:async id=>(await plan(id)).result,publish:(id,fingerprint)=>publish(id,fingerprint),syncAddresses:id=>publish(id,undefined,true),remove,isBusy:()=>busy};
 };
 module.exports.client=client;module.exports.providerInput=providerInput;module.exports.fqdn=fqdn;

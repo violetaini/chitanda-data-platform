@@ -2,10 +2,10 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const manager=require('../deploy/tunnel-control/domains.cjs');
 function fixture(t){const dataDir=fs.mkdtempSync(path.join(os.tmpdir(),'ct-domain-'));t.after(()=>fs.rmSync(dataDir,{recursive:true,force:true}));
- const state={nodes:[{id:'cn',name:'国内',host:'8.8.8.8',ingress:{domain:'sync.example.com'}},{id:'hk',name:'香港',host:'1.1.1.1',ingress:{domain:'sync.example.com'}}],relays:[],routes:[{id:'to-hk',source:'cn',target:'hk',enabled:true},{id:'to-cn',source:'hk',target:'cn',enabled:true}]};state.tunnels=[{id:'pair',name:'双向测试',mode:'bidirectional',routeIds:['to-hk','to-cn']}];let records=[{RecordId:'old-cn',Name:'sync',Type:'A',Line:'default_view',Value:['8.8.8.8'],TTL:300,Status:'1',Weight:1,Remark:'original cn'},{RecordId:'old-hk',Name:'sync',Type:'A',Line:'Abroad',Value:['1.1.1.1'],TTL:300,Status:'1',Weight:1,Remark:'original hk'}],serial=1,breakCNAME=false,loseResponse=false,loseUpdate=false,updates=0;
+ const state={nodes:[{id:'cn',name:'国内',host:'8.8.8.8',ingress:{domain:'sync.example.com'}},{id:'hk',name:'香港',host:'1.1.1.1',ingress:{domain:'sync.example.com'}}],relays:[],routes:[{id:'to-hk',source:'cn',target:'hk',enabled:true},{id:'to-cn',source:'hk',target:'cn',enabled:true}]};state.tunnels=[{id:'pair',name:'双向测试',mode:'bidirectional',routeIds:['to-hk','to-cn']}];let records=[{RecordId:'old-cn',Name:'sync',Type:'A',Line:'default_view',Value:['8.8.8.8'],TTL:300,Status:'1',Weight:1,Remark:'original cn'},{RecordId:'old-hk',Name:'sync',Type:'A',Line:'Abroad',Value:['1.1.1.1'],TTL:300,Status:'1',Weight:1,Remark:'original hk'}],serial=1,breakCNAME=false,loseResponse=false,loseUpdate=false,updates=0,probe=async n=>({nodeId:n.id,dnsNames:'*.example.com'});
  const api={zone:async()=>({minTTL:1}),relative:n=>n.slice(0,-12),records:async n=>structuredClone(records.filter(r=>r.Name===api.relative(n))),add:async r=>{if(breakCNAME&&r.Type==='CNAME'){breakCNAME=false;throw Error('simulated upstream failure');}if(records.some(v=>v.Name===r.Name&&v.Type===r.Type&&v.Line===r.Line))throw Error('duplicate slot');records.push({...structuredClone(r),RecordId:'new-'+serial++});if(loseResponse&&r.Type==='CNAME'){loseResponse=false;throw Error('response lost after commit');}},remove:async r=>{records=records.filter(v=>v.RecordId!==r.RecordId);},update:async(r,old)=>{updates++;records=records.map(v=>v.RecordId===old.RecordId?{...structuredClone(r),RecordId:old.RecordId}:v);if(loseUpdate){loseUpdate=false;throw Error('response lost after TTL update');}},status:async()=>{}};
- const m=manager({dataDir,getState:()=>state,save:()=>{},audit:()=>{},probe:async n=>({nodeId:n.id,dnsNames:'*.example.com'}),makeClient:()=>api});
- return {m,state,dataDir,records:()=>records,setRecords:v=>records=v,failCNAME:()=>breakCNAME=true,loseResponse:()=>loseResponse=true,loseUpdate:()=>loseUpdate=true,updates:()=>updates};
+ const m=manager({dataDir,getState:()=>state,save:()=>{},audit:()=>{},probe:(...args)=>probe(...args),makeClient:()=>api});
+ return {m,state,dataDir,records:()=>records,setRecords:v=>records=v,failCNAME:()=>breakCNAME=true,loseResponse:()=>loseResponse=true,loseUpdate:()=>loseUpdate=true,updates:()=>updates,setProbe:fn=>probe=fn};
 }
 async function setup(t){const f=fixture(t);await f.m.configure({baseURL:'https://dns.example.com',zone:'example.com',zoneId:3,uid:1001,apiKey:'fixture-dns-key'});f.b=f.m.create({domain:'sync.example.com',tunnelId:'pair'});return f;}
 test('adopt exact existing endpoints, stage CNAME target and publish regional records',async t=>{const f=await setup(t),p=await f.m.preview(f.b.id);assert.equal(p.changes.remove.length,2);assert.equal(p.records.length,3);await f.m.publish(f.b.id,p.fingerprint);assert.equal(f.m.summary().bindings[0].status,'published');assert.deepEqual(f.records().filter(r=>r.Type==='A').map(r=>[r.Line,r.Value[0]]),[['default_view','8.8.8.8'],['Abroad','1.1.1.1']]);assert.equal(f.records().filter(r=>r.Name==='sync')[0].Type,'CNAME');assert.ok(!JSON.stringify(f.m.summary()).includes('fixture-dns-key'));});
@@ -37,4 +37,33 @@ test('one-second TTL is the default and changes all managed records in place',as
 test('failed TTL-only publish restores the previous values and retains a pending change',async t=>{
  const f=await setup(t);f.m.updateTTL(f.b.id,{ttl:60});let p=await f.m.preview(f.b.id);await f.m.publish(f.b.id,p.fingerprint);f.m.updateTTL(f.b.id,{ttl:1});
  const before=structuredClone(f.records());p=await f.m.preview(f.b.id);f.loseUpdate();await assert.rejects(f.m.publish(f.b.id,p.fingerprint),e=>e.status===502);assert.equal(f.b.pendingTTL,true);assert.equal(f.b.publishedTTL,60);assert.equal(f.b.ttl,1);assert.deepEqual(f.records(),before);
+});
+
+async function published(t){const f=await setup(t),p=await f.m.preview(f.b.id);await f.m.publish(f.b.id,p.fingerprint);return f;}
+test('automatic IP maintenance preserves records, regions and unpublished TTL changes',async t=>{
+ const f=await published(t),before=structuredClone(f.records()),version=f.state.version;
+ f.m.updateTTL(f.b.id,{ttl:60});f.state.nodes[0].host='9.9.9.9';const result=await f.m.syncAddresses(f.b.id);
+ assert.equal(result.changes.update.length,1);assert.equal(result.changes.add.length,0);assert.equal(result.changes.remove.length,0);
+ assert.deepEqual(f.records(),before.map(r=>r.Type==='A'&&r.Line==='default_view'?{...r,Value:['9.9.9.9']}:r));
+ assert.equal(f.b.pendingTTL,true);assert.equal(f.b.publishedTTL,1);assert.equal(f.state.version,version);
+ f.state.routes.forEach(r=>r.enabled=false);f.state.nodes[1].host='1.0.0.1';await f.m.syncAddresses(f.b.id);assert.equal(f.records().find(r=>r.Line==='Abroad').Value[0],'1.0.0.1');
+});
+test('automatic updates verify TLS before DNS writes and never publish a draft',async t=>{
+ const f=await published(t),before=structuredClone(f.records());f.state.nodes[0].host='9.9.9.9';
+ f.setProbe(async()=>{throw Error('certificate mismatch');});await assert.rejects(f.m.syncAddresses(f.b.id),/certificate mismatch/);assert.deepEqual(f.records(),before);
+ f.b.status='draft';await assert.rejects(f.m.syncAddresses(f.b.id),e=>e.status===409);assert.deepEqual(f.records(),before);
+});
+test('automatic maintenance refuses deleted, foreign, disabled or repointed DNS records',async t=>{
+ const f=await published(t),original=structuredClone(f.records());f.state.nodes[0].host='9.9.9.9';
+ const variants=[original.slice(1),original.map((r,i)=>i===0?{...r,Remark:'external owner'}:r),original.map((r,i)=>i===0?{...r,Status:'0'}:r),original.map(r=>r.Type==='CNAME'?{...r,Value:['foreign.example.com']}:r),[...original,{RecordId:'foreign-txt',Name:'sync',Type:'TXT',Line:'default_view',Value:['keep'],TTL:60,Status:'1'}]];
+ for(const records of variants){f.setRecords(structuredClone(records));await assert.rejects(f.m.syncAddresses(f.b.id),e=>e.status===409);assert.deepEqual(f.records(),records);}
+});
+test('automatic update lost response restores original addresses and can retry',async t=>{
+ const f=await published(t),before=structuredClone(f.records());f.state.nodes[0].host='9.9.9.9';f.loseUpdate();
+ await assert.rejects(f.m.syncAddresses(f.b.id),e=>e.status===502);assert.deepEqual(f.records(),before);
+ await f.m.syncAddresses(f.b.id);assert.equal(f.records().find(r=>r.Type==='A'&&r.Line==='default_view').Value[0],'9.9.9.9');
+});
+test('node changes during certificate validation cannot publish an obsolete address',async t=>{
+ const f=await published(t),before=structuredClone(f.records());f.state.nodes[0].host='9.9.9.9';f.setProbe(async n=>{if(n.id==='cn')n.host='8.8.4.4';return {nodeId:n.id};});
+ await assert.rejects(f.m.syncAddresses(f.b.id),e=>e.status===409);assert.deepEqual(f.records(),before);
 });
