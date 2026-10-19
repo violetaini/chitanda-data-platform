@@ -42,6 +42,9 @@ test('management privileges, session source binding, CSRF, origin and scoped nod
  const request=(endpoint,method='GET',headers={},value)=>fetch(base+endpoint,{method,headers,...(value===undefined?{}:{body:JSON.stringify(value)})});
  for(const endpoint of ['/tunnel/api/state','/tunnel/api/enrollment','/tunnel/api/security','/tunnel/api/profile','/tunnel/api/account','/tunnel/api/settings'])assert.equal((await request(endpoint)).status,401);
  const login=await request('/tunnel/api/login','POST',{'Content-Type':'application/json'},{username:'boundary-admin',password});assert.equal(login.status,200);const cookie=login.headers.get('set-cookie'),value=await login.json(),headers={Cookie:cookie.split(';')[0],'X-CSRF-Token':value.csrf,'Content-Type':'application/json'};
+ assert.equal((await request('/tunnel/api/domains/0000000000000000','PATCH',{'Content-Type':'application/json'},{ttl:1})).status,401);
+ assert.equal((await request('/tunnel/api/domains/0000000000000000','PATCH',{Cookie:headers.Cookie,'Content-Type':'application/json'},{ttl:1})).status,403);
+ assert.equal((await request('/tunnel/api/domains/0000000000000000','PATCH',{...headers,Origin:'https://untrusted.example'},{ttl:1})).status,403);
  assert.match(cookie,/HttpOnly/);assert.match(cookie,/SameSite=Strict/);
  assert.equal((await request('/tunnel/api/state','GET',{...headers,'X-Real-IP':'123.119.187.76'})).status,401);
  assert.equal((await request('/tunnel/api/nodes','POST',{Cookie:headers.Cookie,'Content-Type':'application/json'},{name:'bad'})).status,403);

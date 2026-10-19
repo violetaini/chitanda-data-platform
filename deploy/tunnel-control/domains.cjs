@@ -52,7 +52,13 @@ module.exports=function({dataDir,getState,save,audit,probe=inspectTLS,makeClient
  function routes(binding){const s=getState(),nodes=[...s.nodes,...s.relays],t=tunnel(binding);if(t.routeIds.length!==(t.mode==='bidirectional'?2:1))fail('隧道方向配置不完整',409);const rs=t.routeIds.map(id=>{const r=s.routes.find(r=>r.id===id),node=nodes.find(n=>n.id===r?.source);if(!r||!r.enabled||!node?.ingress||!net.isIP(node.host))fail('域名绑定的线路或 HTTPS 入口尚未就绪',409);if(node.ingress.domain!==binding.domain)fail('业务域名须与入口已部署的 HTTPS / SSL 域名一致',409);return {route:r,node};});if(t.mode==='bidirectional'&&(rs[0].route.source!==rs[1].route.target||rs[0].route.target!==rs[1].route.source||rs[0].node.id===rs[1].node.id))fail('双向隧道的节点须互为反向',409);return rs;}
  function summary(){const c=config(),s=getState();return {configured:!!c,...(c?{baseURL:c.baseURL,uid:c.uid,zoneId:c.zoneId,zone:c.zone}:{}),bindings:(s.domains||[]).map(b=>{const t=s.tunnels?.find(t=>t.id===b.tunnelId);return {...b,mode:t?.mode,regions:(t?.routeIds||[]).map((id,i)=>{const r=s.routes.find(r=>r.id===id),n=[...s.nodes,...s.relays].find(n=>n.id===r?.source);return {region:t.mode==='single'?'全部地区':i?'国际 / 境外':'国内 / 默认',routeId:r?.id,nodeId:n?.id,nodeName:n?.name,host:n?.host};})};})};}
  async function configure(input){if(busy)fail('DNS 正在发布，请稍后再修改连接',409);busy=true;try{const previous=config()||{},next=providerInput(input,previous);if((getState().domains||[]).length&&previous.zone&&(next.zone!==previous.zone||next.zoneId!==previous.zoneId||next.baseURL!==previous.baseURL))fail('已有域名绑定时不能切换 DNS 区域或服务',409);await makeClient(next).zone();writePrivate(file,next);audit('接入 DNS 管理',next.baseURL+' · '+next.zone);return summary();}finally{busy=false;}}
- function create(input){if(busy)fail('DNS 正在发布，请稍后绑定',409);const c=config();if(!c)fail('请先接入 DNS 管理');const domain=fqdn(input.domain);if(!domain.endsWith('.'+c.zone)||domain===c.zone)fail('业务域名须为接入区域下的子域名');if((getState().domains||[]).some(b=>b.domain===domain))fail('该业务域名已绑定',409);if((getState().domains||[]).length>=64)fail('最多配置 64 个业务域名');const id=crypto.randomBytes(8).toString('hex'),ttl=Number(input.ttl??60);if(!Number.isInteger(ttl)||ttl<60||ttl>3600)fail('TTL 应为 60–3600 秒');const b={id,domain,cname:'ct-'+id+'.tunnel.'+c.zone,tunnelId:String(input.tunnelId||''),ttl,status:'draft',createdAt:new Date().toISOString()};const rs=routes(b);b.mainlandRouteId=rs[0].route.id;if(rs[1])b.internationalRouteId=rs[1].route.id;getState().domains||=[];getState().domains.push(b);audit('绑定业务域名',domain);return b;}
+ function create(input){if(busy)fail('DNS 正在发布，请稍后绑定',409);const c=config();if(!c)fail('请先接入 DNS 管理');const domain=fqdn(input.domain);if(!domain.endsWith('.'+c.zone)||domain===c.zone)fail('业务域名须为接入区域下的子域名');if((getState().domains||[]).some(b=>b.domain===domain))fail('该业务域名已绑定',409);if((getState().domains||[]).length>=64)fail('最多配置 64 个业务域名');const id=crypto.randomBytes(8).toString('hex'),ttl=Number(input.ttl??1);if(!Number.isInteger(ttl)||ttl<1||ttl>3600)fail('TTL 应为 1–3600 秒');const b={id,domain,cname:'ct-'+id+'.tunnel.'+c.zone,tunnelId:String(input.tunnelId||''),ttl,status:'draft',createdAt:new Date().toISOString()};const rs=routes(b);b.mainlandRouteId=rs[0].route.id;if(rs[1])b.internationalRouteId=rs[1].route.id;getState().domains||=[];getState().domains.push(b);audit('绑定业务域名',domain);return b;}
+ function updateTTL(id,input){
+  if(busy)fail('DNS 正在发布，请稍后修改 TTL',409);
+  const binding=getBinding(id);if(!input||Array.isArray(input)||Object.keys(input).some(k=>k!=='ttl'))fail('仅支持修改 TTL');const ttl=Number(input.ttl);if(!Number.isInteger(ttl)||ttl<1||ttl>3600)fail('TTL 应为 1–3600 秒');
+  if(binding.ttl!==ttl){if(binding.status==='published')binding.publishedTTL??=binding.ttl;binding.ttl=ttl;if(binding.status==='published')binding.pendingTTL=ttl!==binding.publishedTTL;plans.delete(id);audit('更新域名 TTL',binding.domain+' · '+ttl+' 秒');}
+  return binding;
+ }
  async function plan(id){
   const binding=getBinding(id),c=config();if(!c)fail('DNS 管理尚未配置');const api=makeClient(c),rs=routes(binding),zone=await api.zone();if(binding.ttl<zone.minTTL)fail('TTL 小于 DNS 区域最低要求');
   const certificate=await Promise.all(rs.map(({node})=>probe(node,binding.domain)));
@@ -87,10 +93,10 @@ module.exports=function({dataDir,getState,save,audit,probe=inspectTLS,makeClient
     }catch{restored=false;}
     binding.lastError=restored?'发布未完成，已恢复原解析':'发布及回退未完成，请检查 DNS 备份';save();fail(binding.lastError,502);
    }
-   binding.status='published';binding.publishedAt=new Date().toISOString();binding.lastCertificateCheck=work.result.certificate;delete binding.lastError;plans.delete(id);audit('发布域名解析',binding.domain+' → '+binding.cname);return work.result;
+   binding.status='published';binding.publishedTTL=binding.ttl;delete binding.pendingTTL;binding.publishedAt=new Date().toISOString();binding.lastCertificateCheck=work.result.certificate;delete binding.lastError;plans.delete(id);audit('发布域名解析',binding.domain+' → '+binding.cname);return work.result;
   }finally{busy=false;}
  }
  function remove(id){const b=getBinding(id);if(b.status==='published')fail('已发布域名保留接入记录，避免误删生产解析',409);getState().domains=getState().domains.filter(v=>v.id!==id);plans.delete(id);audit('移除域名草稿',b.domain);}
- return {summary,configure,create,preview:async id=>(await plan(id)).result,publish,remove,isBusy:()=>busy};
+ return {summary,configure,create,updateTTL,preview:async id=>(await plan(id)).result,publish,remove,isBusy:()=>busy};
 };
 module.exports.client=client;module.exports.providerInput=providerInput;module.exports.fqdn=fqdn;
