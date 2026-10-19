@@ -7,7 +7,7 @@ function fixture(t){
  const m=manager(opts);return {m,dir,releaseDir,state,opts,advance:ms=>time+=ms,ticket:info=>info.commands.install.match(/--ticket '([a-f0-9]{64})'/)[1]};
 }
 test('short-lived installation leases bind to one node and first server, survive restart, and never persist raw secrets',t=>{
- const f=fixture(t),info=f.m.issue('node-fixture'),ticket=f.ticket(info);assert.equal(info.available,true);assert.match(info.commands.install,/mktemp/);assert.match(info.commands.install,/--resolve/);assert.ok(!info.commands.install.includes(info.config.token));
+ const f=fixture(t),info=f.m.issue('node-fixture'),ticket=f.ticket(info);assert.equal(info.available,true);assert.match(info.commands.install,/^bash <\(curl -fsSL /);assert.match(info.commands.install,/\/install\.sh/);assert.match(info.commands.installDirect,/--resolve/);assert.match(info.commands.installGithub,/raw\.githubusercontent\.com/);assert.ok(!info.commands.install.includes(info.config.token));
  assert.ok(!fs.readFileSync(path.join(f.dir,'node-installations.json'),'utf8').includes(ticket));assert.ok(!fs.readFileSync(path.join(f.dir,'node-installations.json'),'utf8').includes(info.config.token));
  assert.equal(f.m.claim({ticket},'9.9.9.9').config.id,'node-fixture');assert.equal(manager(f.opts).claim({ticket},'9.9.9.9').config.id,'node-fixture');
  assert.throws(()=>f.m.claim({ticket},'1.1.1.1'),e=>e.status===401);f.advance(15*60000+1);assert.throws(()=>f.m.claim({ticket},'9.9.9.9'),e=>e.status===401);

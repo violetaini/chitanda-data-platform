@@ -105,7 +105,7 @@ const server=http.createServer(async(req,res)=>{try{
   if(p===BASE+'/api/login'&&!String(req.headers['content-type']||'').toLowerCase().startsWith('application/json'))return json(res,415,{error:'请使用 JSON 格式请求'});
  }
  if(p==='/health')return json(res,200,{ok:true});
- if(p==='/transit-node/install.sh'&&req.method==='GET'){res.writeHead(200,{'Content-Type':'text/x-shellscript; charset=utf-8','Cache-Control':'no-store'});return fs.createReadStream(path.join(ROOT,'node-install.sh')).pipe(res);}
+ if((p==='/transit-node/install.sh'||p==='/install.sh')&&req.method==='GET'){res.writeHead(200,{'Content-Type':'text/x-shellscript; charset=utf-8','Cache-Control':'no-store'});return fs.createReadStream(path.join(ROOT,p==='/install.sh'?'node-bootstrap.sh':'node-install.sh')).pipe(res);}
  if(p==='/transit-node/enroll'&&req.method==='POST')return json(res,200,installations.claim(await body(req,4096),clientIP));
  if(p==='/transit-node/release'||p==='/transit-node/status'||p.startsWith('/transit-node/releases/')){
   const id=req.headers['x-node-id'],token=String(req.headers.authorization||'').replace(/^Bearer /,''),item=[...state.relays,...state.nodes].find(n=>n.id===id);
@@ -194,7 +194,7 @@ const server=http.createServer(async(req,res)=>{try{
  }
  if(req.method!=='GET'&&req.method!=='HEAD')return json(res,405,{error:'不支持该方法'});
  const file=({[BASE]:'index.html',[BASE+'/']:'index.html',[BASE+'/app.js']:'app.js',[BASE+'/ui.js']:'ui.js',[BASE+'/onboarding.js']:'onboarding.js',[BASE+'/graph-model.js']:'graph-model.js',[BASE+'/dashboard.js']:'dashboard.js',[BASE+'/style.css']:'style.css',[BASE+'/theme.css']:'theme.css',[BASE+'/account.js']:'account.js',[BASE+'/settings.js']:'settings.js',[BASE+'/domains.js']:'domains.js',[BASE+'/security.js']:'security.js',[BASE+'/favicon.ico']:'favicon.ico',[BASE+'/favicon.png']:'favicon.png',[BASE+'/brand-logo.webp']:'brand-logo.webp'})[p];if(!file)return json(res,404,{error:'页面不存在'});
- res.writeHead(200,{'Content-Type':({'.html':'text/html','.js':'text/javascript','.css':'text/css','.ico':'image/x-icon','.png':'image/png','.webp':'image/webp'})[path.extname(file)]+(/\.(html|js|css)$/.test(file)?'; charset=utf-8':''),'Cache-Control':'no-store'});if(req.method==='HEAD')return res.end();fs.createReadStream(path.join(ROOT,'public',file)).pipe(res);
+ res.writeHead(200,{'Content-Type':({'.html':'text/html','.js':'text/javascript','.css':'text/css','.ico':'image/x-icon','.png':'image/png','.webp':'image/webp'})[path.extname(file)]+(/\.(html|js|css)$/.test(file)?'; charset=utf-8':''),'Cache-Control':'no-store'});if(req.method==='HEAD')return res.end();if(file==='index.html')return res.end(fs.readFileSync(path.join(ROOT,'public',file),'utf8').replaceAll('__BUILD_VERSION__',VERSION));fs.createReadStream(path.join(ROOT,'public',file)).pipe(res);
  }catch(e){console.error('request failed:',e.status?e.message:'internal error');if(!res.headersSent)json(res,e.status||500,{error:e.status?e.message:'服务暂时不可用',...(e.retryAfter?{retryAfter:e.retryAfter}:{})},e.retryAfter?{'Retry-After':String(e.retryAfter)}:{});else res.destroy();}});
 setInterval(()=>{for(const [k,v]of sessions)if(v.until<Date.now())sessions.delete(k);},600000).unref();
 server.requestTimeout=15000;server.headersTimeout=10000;server.listen(PORT,'127.0.0.1',()=>console.log('Chitanda · 数据中台管理 v2 listening on 127.0.0.1:'+PORT));

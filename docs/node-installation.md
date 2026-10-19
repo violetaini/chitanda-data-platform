@@ -1,15 +1,23 @@
 # 节点安装、更新和卸载
 
-节点管理中的“安装与维护”提供复制命令，新增节点后自动弹出。Linux/systemd 支持 amd64 / arm64，不需要把整个控制面板、数据库、容器或编译工具装到节点。
+节点管理中的“安装指令”提供可直接复制的一行命令，新增节点后自动弹出。Linux/systemd 支持 amd64 / arm64，不需要把整个控制面板、数据库、容器或编译工具装到节点。
 
 ## 安装
 
 1. 添加节点的名称和用途；节点 ID 与独立凭据由面板生成。
-2. 在“安装与维护”复制安装命令，到目标服务器的 root 终端执行。普通账户需先使用 `sudo -i` 进入 root 环境。
+2. 点“安装指令”，复制安装命令，到目标服务器的 root 终端执行。普通账户需先使用 `sudo -i` 进入 root 环境。
 3. 安装器自动识别架构，从同一个 HTTPS 控制端领取配置和下载安装包，校验大小、SHA-256 与程序版本，建立低权限系统服务并启动。
 4. 返回面板确认上线；地址来自鉴权心跳。安装节点程序不自动部署任意业务 HTTPS 入口和源站适配器，继续按 [URL 接入教程](url-access.md) 配置。
 
 目标需要 Linux、systemd、Bash、curl、Python 3、util-linux / flock 和基础文件工具。脚本不自动更换系统 Python，不安装 Docker、Node.js 或 Go。缺少工具时明确提示；Python 仅用于安装时解析配置，节点运行不依赖它。
+
+命令格式如下；真实控制端地址和短期凭据由自己的面板生成，不要原样执行占位示例：
+
+```bash
+bash <(curl -fsSL https://datahub.example.com/install.sh) install --server 'https://datahub.example.com' --ticket '从面板复制的15分钟安装凭据'
+```
+
+默认从国内控制端 `/install.sh` 下载公开启动脚本；“其他下载方式”同时提供 GitHub 和直达源站命令。公开项目地址为 [chitanda-data-platform](https://github.com/violetaini/chitanda-data-platform)，启动脚本为 [node-bootstrap.sh](https://github.com/violetaini/chitanda-data-platform/blob/main/deploy/tunnel-control/node-bootstrap.sh)。公开启动脚本不包含生产身份，完整安装器先下载到私有临时目录并验证固定摘要，再执行和清理；节点配置仍需短期凭据领取。
 
 默认路径：
 

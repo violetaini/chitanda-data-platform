@@ -1,6 +1,6 @@
 {
   "name": "chitanda-data-platform-workspace",
-  "version": "2.11.0",
+  "version": "2.11.1",
   "private": true,
   "description": "Chitanda 数据中台管理：控制面板、轻量节点及 HTTPS 数据接入",
   "engines": {

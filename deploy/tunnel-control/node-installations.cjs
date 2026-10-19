@@ -31,10 +31,11 @@ module.exports=function({dataDir,releaseDir,getState,enrollment,audit,now=Date.n
   tickets.push({digest:hash(ticket),id,credential:hash(n.token),until});save();
   const address=config.controllerAddress||'',resolve=address?' --server-address '+quote(address):'';
   let direct='';if(address){const m=address.match(/^(.*):(\d+)$/),ip=m?.[1].replace(/^\[|\]$/g,'');if(!m||!net.isIP(ip)||Number(m[2])!==Number(server.port||443))fail('控制端直达地址须为匹配 HTTPS 端口的 IP',503);direct=server.hostname+':'+(server.port||443)+':'+(net.isIP(ip)===6?'['+ip+']':ip);}
-  const download='ct_installer=$(mktemp /tmp/chitanda-node.XXXXXXXX) && curl -fsS --proto '+quote('=https')+' --tlsv1.2'+(direct?' --resolve '+quote(direct):'')+' '+quote(server.origin+'/transit-node/install.sh')+' -o "$ct_installer"';
-  const command=args=>download+' && bash "$ct_installer" '+args+'; ct_result=$?; rm -f -- "$ct_installer"; (exit "$ct_result")';
+  const github='https://raw.githubusercontent.com/violetaini/chitanda-data-platform/main/deploy/tunnel-control/node-bootstrap.sh';
+  const launch=(url,args,origin=false)=>'bash <(curl -fsSL'+(origin&&direct?' --resolve '+quote(direct):'')+' '+quote(url)+') '+args;
+  const installArgs='install --server '+quote(server.origin)+' --ticket '+quote(ticket);
   audit('生成节点安装命令',n.name+' · 有效期 15 分钟');
-  return {nodeId:id,name:n.name,config,expiresAt:new Date(until).toISOString(),available:!!available,release:available,error,commands:{install:command('install --server '+quote(server.origin)+resolve+' --ticket '+quote(ticket)),update:command('update'),uninstall:'/usr/local/sbin/chitanda-node uninstall',status:'systemctl status chitanda-transit --no-pager',logs:'journalctl -u chitanda-transit -n 50 --no-pager'}};
+  return {nodeId:id,name:n.name,config,expiresAt:new Date(until).toISOString(),available:!!available,release:available,error,repository:'https://github.com/violetaini/chitanda-data-platform',commands:{install:launch(server.origin+'/install.sh',installArgs),installGithub:launch(github,installArgs),installDirect:launch(server.origin+'/install.sh',installArgs+resolve,true),update:launch(server.origin+'/install.sh','update',true),uninstall:'/usr/local/sbin/chitanda-node uninstall',status:'systemctl status chitanda-transit --no-pager',logs:'journalctl -u chitanda-transit -n 50 --no-pager'}};
  }
  function claim(input,ip){
   if(!net.isIP(ip))fail('节点来源地址不正确',403);

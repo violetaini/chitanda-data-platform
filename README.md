@@ -1,6 +1,16 @@
 # Chitanda 数据中台管理
 
-独立控制面板、轻量 Go 节点和 HTTPS 业务接入组件。此私有仓库从 Chitanda 项目中提取当前实现，保留 UI、动态图表、自动拓扑、账号与头像管理、多优化节点、H2 / H3 / Stream 配置与统一证书管理、访问控制及回归测试。
+独立控制面板、轻量 Go 节点和 HTTPS 业务接入组件。本公开仓库从 Chitanda 项目中提取当前实现，保留 UI、动态图表、自动拓扑、账号与头像管理、多优化节点、H2 / H3 / Stream 配置与统一证书管理、访问控制及回归测试。
+
+## 节点一键接入
+
+在已部署中台的「节点管理 → 安装指令」复制完整命令，到目标 Linux 服务器的 root 终端执行。命令自动带上你的控制端和短期安装凭据，不再手工保存 JSON。
+
+```bash
+bash <(curl -fsSL https://datahub.example.com/install.sh) install --server 'https://datahub.example.com' --ticket '从你自己的面板复制15分钟安装凭据'
+```
+
+上面是格式示例，不能原样执行。面板同时提供国内下载、GitHub 下载及直达源站方式。公开脚本见 [node-bootstrap.sh](deploy/tunnel-control/node-bootstrap.sh)；仅浏览脚本或公开源码不会获得任何节点身份。安装、更新与卸载步骤见 [节点安装文档](docs/node-installation.md)。
 
 ## 目录
 

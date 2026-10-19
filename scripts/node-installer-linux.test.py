@@ -53,7 +53,12 @@ if cmd=='systemctl':
 if cmd=='curl':
  f=json.loads((root/'fixture.json').read_text());url=next(a for a in args if a.startswith('https://'));output=pathlib.Path(args[args.index('-o')+1]);assert '--proto' in args and '--tlsv1.2' in args;assert 'a'*64 not in ' '.join(args),'long-term token exposed in argv'
  asset={'url':'/transit-node/releases/linux-'+os.environ.get('FAKE_PLATFORM','amd64'),'sha256':f['sha'],'size':len(f['binary'].encode())};release={'version':f['version'],'assets':{'linux-'+os.environ.get('FAKE_PLATFORM','amd64'):asset}}
- if url.endswith('/enroll'):value={'config':{'id':f['id'],'token':'a'*64,'role':'agent','controller':'https://control.example.com','controllerAddress':'8.8.8.8:443','ca':'PUBLIC CA'},'release':release};output.write_text(json.dumps(value))
+ if url.endswith('/install.sh'):
+  if (root/'fail-download').exists():sys.exit(22)
+  value=(root/'installer.sh').read_text()
+  if (root/'tamper-script').exists():value+='\ntouch '+str(root/'must-not-execute')+'\n'
+  output.write_text(value)
+ elif url.endswith('/enroll'):value={'config':{'id':f['id'],'token':'a'*64,'role':'agent','controller':'https://control.example.com','controllerAddress':'8.8.8.8:443','ca':'PUBLIC CA'},'release':release};output.write_text(json.dumps(value))
  elif url.endswith('/release'):output.write_text(json.dumps(release))
  else:
   if (root/'fail-download').exists():sys.exit(22)
@@ -72,6 +77,13 @@ raise SystemExit('unexpected fake command: '+cmd)
   check('a'*64 not in r.stdout+r.stderr,'node credentials do not enter installer logs')
   return r
  subprocess.run(['bash','-n',str(script)],check=True)
+ if globals().get('bootstrap_source'):
+  bootstrap=bootstrap_source.replace('/etc/chitanda-transit',str(sandbox)+'/etc/chitanda-transit').replace('/var/tmp/chitanda-launcher.XXXXXXXX',str(sandbox)+'/var/tmp/chitanda-launcher.XXXXXXXX').replace(hashlib.sha256(installer_source.encode()).hexdigest(),hashlib.sha256(source.encode()).hexdigest())
+  launcher=sandbox/'launcher.sh';launcher.write_text(bootstrap);subprocess.run(['bash','-n',str(launcher)],check=True)
+  command=['bash',str(launcher),'install','--server','https://control.example.com','--server-address','8.8.8.8:443','--ticket','f'*64]
+  result=subprocess.run(command,capture_output=True,text=True,env=env,timeout=30);check(result.returncode==0 and binary.exists(),'short public launcher installs the real service in isolated paths');check(not list((sandbox/'var/tmp').iterdir()),'launcher cleans temporary script and credentials');run('uninstall','--purge')
+  (sandbox/'tamper-script').touch();result=subprocess.run(command,capture_output=True,text=True,env=env,timeout=20);(sandbox/'tamper-script').unlink();check(result.returncode!=0 and not binary.exists() and not (sandbox/'must-not-execute').exists(),'launcher rejects modified script before execution')
+  result=subprocess.run(['bash',str(launcher),'install','--server','http://control.example.com'],capture_output=True,text=True,env=env,timeout=20);check(result.returncode!=0 and not binary.exists(),'launcher rejects plaintext control address')
  run('install');check(binary.exists() and unit.exists(),'fresh install creates binary and unit');check(config.stat().st_mode&0o777==0o600,'private node config');check('User=chitanda-transit' in unit.read_text() and 'NoNewPrivileges=true' in unit.read_text(),'least-privilege service');check(not list((sandbox/'var/tmp').iterdir()),'temporary credentials cleaned after install')
  c=json.loads(config.read_text());c['dataGateway']={'domain':'keep.example.com'};config.write_text(json.dumps(c));cache=sandbox/'var/lib/chitanda-transit/runtime.json';cache.write_text('preserved cache');run('install');check(json.loads(config.read_text())['dataGateway']['domain']=='keep.example.com','same identity reinstall preserves gateway');check(cache.read_text()=='preserved cache','reinstall preserves cache')
  old=binary.read_bytes();oldconfig=config.read_bytes();fixture.write_text(json.dumps(payload(id='other-node')));run('install',success=False);check(config.read_bytes()==oldconfig and binary.read_bytes()==old,'different identity cannot overwrite node')
