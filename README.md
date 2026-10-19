@@ -68,3 +68,9 @@ npm run build:engine
 节点依赖 Chitanda 上游，固定提交的许可证副本见 `third_party/chitanda-LICENSE`；依赖及品牌资源保留各自权利，不因本仓库建立而另行开放授权。详见 [第三方说明](THIRD_PARTY_NOTICES.md)。
 
 节点与证书、Stream 的部署和维护说明见 [统一证书与原生 Stream](docs/certificates-stream.md)。
+
+## 域名接入与 DNS
+
+在系统设置连接 DNS Manager 签名 API，将业务域名绑定国内、国际两条已部署 HTTPS 入口的数据通道。中台生成 CNAME 目标，并通过华为云的默认 / 境外线路解析到对应节点；业务请求继续直接经过节点。操作步骤、证书边界和回退说明见 [域名与地区调度](docs/domain-routing.md)。
+
+每次完成代码、样式、配置或文档修改后，应更新 `CHANGELOG.md` 并提交、推送 GitHub；运行凭据、DNS API 密钥与服务器私有状态不得提交。

@@ -24,3 +24,6 @@ route-checks.json.tmp
 config.json
 pki/
 .DS_Store
+
+dns-provider.json
+dns-backup-*.json
