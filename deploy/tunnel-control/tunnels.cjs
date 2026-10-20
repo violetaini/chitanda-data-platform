@@ -51,7 +51,14 @@ module.exports=function({getState,validateRoute,ensureCertificates,audit}){
    s.version++;audit(old?'更新隧道':'创建隧道',name+' · '+(count===2?'双向':'单向'));return t;
   }catch(e){s.routes=before;s.relays=previousRelays;if(previousNodes===undefined)delete s.nodes;else s.nodes=previousNodes;s.tunnels=previousTunnels;throw e;}
  }
- function remove(id){const s=getState(),t=get(id);if(bound(t))fail('请先迁移此隧道绑定的业务域名，避免中断生产解析',409);s.routes=s.routes.filter(r=>!t.routeIds.includes(r.id));s.tunnels=s.tunnels.filter(v=>v.id!==id);s.version++;audit('删除隧道',t.name);}
+ function remove(id){
+  const s=getState(),t=get(id),bindings=(s.domains||[]).filter(b=>b.tunnelId===t.id||t.routeIds.some(id=>[b.mainlandRouteId,b.internationalRouteId].includes(id)));
+  if(bindings.some(b=>b.status==='published'||b.publishedAt))fail('此通道绑定了已发布的业务域名，请先迁移域名后再删除',409);
+  if(bindings.some(b=>b.lastError))fail('此通道的域名发布状态需要核验，请先处理域名发布错误后再删除',409);
+  s.routes=s.routes.filter(r=>!t.routeIds.includes(r.id));s.tunnels=s.tunnels.filter(v=>v.id!==id);
+  if(s.domains)s.domains=s.domains.filter(b=>!bindings.includes(b));
+  s.version++;audit('删除隧道',t.name+(bindings.length?' · 清理 '+bindings.length+' 个未发布域名草稿':''));
+ }
  function merge(input){
   const s=getState(),a=get(input.firstTunnelId),b=get(input.secondTunnelId);
   if(a.id===b.id||a.mode!=='single'||b.mode!=='single'||bound(a)||bound(b))fail('请选择两个未绑定域名的单向隧道',409);
