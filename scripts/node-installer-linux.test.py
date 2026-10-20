@@ -15,7 +15,7 @@ def check(value,message):
 try:
  for name in ['etc/systemd/system','etc/chitanda-transit','var/lib/chitanda-transit','var/tmp','var/backups','usr/local/bin','usr/local/sbin','run','fakebin']:(sandbox/name).mkdir(parents=True,exist_ok=True)
  replacements=['/etc/systemd/system/chitanda-transit.service','/usr/local/sbin/chitanda-node','/usr/local/bin/chitanda-transit','/etc/chitanda-transit','/var/lib/chitanda-transit','/run/chitanda-node-install.lock','/var/tmp/chitanda-node.XXXXXXXX','/var/backups/chitanda-node.XXXXXXXX']
- source=installer_source
+ source=installer_source.replace('if command -v python3 >/dev/null && [[ -f $ETC/config.json ]]; then','if false; then')
  for name in replacements:source=source.replace(name,str(sandbox)+name)
  script=sandbox/'installer.sh';script.write_text(source);script.chmod(0o700)
  config=sandbox/'etc/chitanda-transit/config.json';binary=sandbox/'usr/local/bin/chitanda-transit';unit=sandbox/'etc/systemd/system/chitanda-transit.service'
@@ -91,8 +91,8 @@ raise SystemExit('unexpected fake command: '+cmd)
  fixture.write_text(json.dumps(payload('2.7.3')));(sandbox/'fail-download').touch();run('update',success=False);(sandbox/'fail-download').unlink();check(binary.read_bytes()==old,'download failure preserves old binary')
  (sandbox/'fail-start').touch();run('update',success=False);check(binary.read_bytes()==old and config.read_bytes()==oldconfig,'failed service start restores binary and config');check(json.loads(statefile.read_text())['active'],'rollback restarts previous service')
  run('update');check(b'2.7.3' in binary.read_bytes(),'successful update replaces binary');check(json.loads(config.read_text())['dataGateway']['domain']=='keep.example.com','update preserves local business config')
- cert=sandbox/'etc/chitanda-transit/keep.crt';cert.write_text('certificate fixture');run('uninstall');check(config.exists() and cache.exists() and cert.exists(),'default uninstall preserves config, cache and certificate');check(not binary.exists() and not unit.exists(),'uninstall removes only owned program and service')
- run('install');run('uninstall','--purge');check(not config.exists() and not cache.exists() and cert.exists(),'explicit purge clears known config without deleting certificate')
+ cert=sandbox/'etc/chitanda-transit/keep.crt';cert.write_text('certificate fixture');(sandbox/'etc/chitanda-transit/installer.json').unlink();(sandbox/'usr/local/sbin/chitanda-node').unlink();run('uninstall');check(config.exists() and cache.exists() and cert.exists(),'default uninstall preserves config, cache and certificate');check(not binary.exists() and not unit.exists(),'legacy uninstall removes owned program and service without requiring helper or marker');check(not json.loads(statefile.read_text())['active'] and not json.loads(statefile.read_text())['enabled'],'uninstall stops and disables the service')
+ run('install');saved=unit.read_text();unit.write_text(saved.replace('ExecStart=', 'ExecStart=/unknown '));run('uninstall',success=False);check(binary.exists() and json.loads(statefile.read_text())['active'],'foreign service definition is never stopped or removed');unit.write_text(saved);run('uninstall','--purge');check(not config.exists() and not cache.exists() and cert.exists(),'explicit purge clears known config without deleting certificate')
  run('install',environment={'FAKE_ARCH':'aarch64','FAKE_PLATFORM':'arm64'});check(json.loads((sandbox/'etc/chitanda-transit/installer.json').read_text())['arch']=='arm64','architecture detection selects arm64');run('uninstall','--purge')
  run('install',success=False,environment={'FAKE_ARCH':'unsupported'});check(not binary.exists(),'unsupported architecture stops before installation')
  print(f'PASS {checks} Linux installer checks: install, repeat, update, checksum and startup rollback, uninstall preservation, purge scope and arm64 detection. All destinations confined to a temporary sandbox.')

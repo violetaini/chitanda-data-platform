@@ -40,5 +40,5 @@ download=(curl -fsS --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 1
 [[ -z ${connection[1]:-} ]] || download+=(--resolve "${connection[1]}")
 "${download[@]}" "${connection[0]}/transit-node/install.sh" -o "$work/install.sh"
 # Keep this digest in step with the reviewed full installer.
-printf '%s  %s\n' '78177e2d4267e7510a891ce7730d5bec354d798e977340c649e3d0c27863bc8b' "$work/install.sh" | sha256sum -c - >/dev/null
+printf '%s  %s\n' '6057f7c401b6c43703587a00e352c4491f3b1ba72b1a13344c24d46fd11bf289' "$work/install.sh" | sha256sum -c - >/dev/null
 bash "$work/install.sh" "$@"

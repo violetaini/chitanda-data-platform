@@ -31,12 +31,34 @@ if [[ $action == uninstall ]]; then
  purge=false
  if [[ ${1:-} == --purge ]]; then purge=true; shift; fi
  [[ $# -eq 0 ]] || die '卸载仅支持 --purge 参数。'
- [[ -f $MARKER ]] || die '没有安装器登记记录，请先使用安装或更新命令接管此节点。'
- systemctl stop "$SERVICE"
+ # Early deployments have the standard unit but no local helper or marker.
+ if [[ -f $UNIT ]]; then
+  grep -Fxq "ExecStart=$BIN -config $ETC/config.json" "$UNIT" || die '服务使用其他程序或配置路径，未执行卸载。'
+  systemctl stop "$SERVICE"
+ elif [[ ! -f $MARKER && ( -f $BIN || -f $HELPER ) ]]; then
+  die '程序归属无法确认，未执行卸载。'
+ fi
  systemctl disable "$SERVICE" >/dev/null 2>&1 || true
  rm -f -- "$UNIT" "$BIN" "$HELPER" "$MARKER"
  systemctl daemon-reload
  systemctl reset-failed "$SERVICE" >/dev/null 2>&1 || true
+ if command -v python3 >/dev/null && [[ -f $ETC/config.json ]]; then
+  python3 - "$ETC/config.json" <<'PY' || say '本机已卸载；中台暂未收到卸载状态，恢复网络后可重试本命令。'
+import pathlib,sys,json,urllib.parse,ipaddress,http.client,ssl,socket
+try:
+ c=json.loads(pathlib.Path(sys.argv[1]).read_text());u=urllib.parse.urlsplit(c['controller'])
+ if u.scheme!='https' or not u.hostname or u.username or u.password or u.query or u.fragment or u.path not in ('','/'):raise ValueError()
+ conn=http.client.HTTPSConnection(u.hostname,u.port or 443,context=ssl.create_default_context(),timeout=10)
+ if c.get('controllerAddress'):
+  host,port=c['controllerAddress'].rsplit(':',1);ip=ipaddress.ip_address(host.strip('[]'))
+  if int(port)!=(u.port or 443):raise ValueError()
+  conn._create_connection=lambda *a,**k:socket.create_connection((str(ip),int(port)),timeout=10)
+ conn.request('POST','/transit-node/uninstalled',body=b'{}',headers={'Content-Type':'application/json','X-Node-ID':c['id'],'Authorization':'Bearer '+c['token']})
+ response=conn.getresponse();response.read();conn.close()
+ if response.status!=200:raise ValueError()
+except Exception:raise SystemExit(1)
+PY
+ fi
  if $purge; then
   # Fixed known files only: never remove shared certificates or other services.
   rm -f -- "$ETC/config.json" "$STATE/runtime.json" "$STATE/relay-ca.pem" "$STATE/replay.db" "$STATE/replay.db-wal" "$STATE/replay.db-shm"

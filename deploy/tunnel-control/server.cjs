@@ -49,7 +49,7 @@ setInterval(()=>{dnsAddressSync.tick().catch(()=>console.error('DNS address main
 const tunnelManager=tunnelModel({getState:()=>state,validateRoute,ensureCertificates:()=>{for(const r of state.relays)ensureCertificate(r);},audit});
 setInterval(()=>{try{routeChecks.tick();}catch{console.error('route check scheduling failed');}},5000).unref();
 const linkKey=r=>[r.relayId,r.transport,r.serverName].join('|');
-function cleanNode(n,relay=false){return {id:n.id,name:n.name,host:n.host||'',role:relay?'优化节点':n.role,kind:relay?'relay':'agent',ingress:n.ingress||null,...(relay?{port:n.port,serverName:n.serverName,tlsVerify:true,certExpires:n.certExpires,certNames:n.certNames,protocols:report(n.id).capabilities?.transports||[]}:{}),...report(n.id)};}
+function cleanNode(n,relay=false){return {id:n.id,name:n.name,host:n.host||'',role:relay?'优化节点':n.role,kind:relay?'relay':'agent',installed:n.installation?.status==='installed',installation:n.installation||null,ingress:n.ingress||null,...(relay?{port:n.port,serverName:n.serverName,tlsVerify:true,certExpires:n.certExpires,certNames:n.certNames,protocols:report(n.id).capabilities?.transports||[]}:{}),...report(n.id)};}
 function snapshot(){
  const relays=state.relays.map(n=>cleanNode(n,true)),nodes=state.nodes.map(n=>cleanNode(n));
  const routes=state.routes.map(r=>{const s=report(r.source),t=report(r.target),mid=report(r.relayId),key=linkKey(r),sl=s.links?.[key],tl=t.links?.[key],current=n=>Number(n.revision)>=state.version;return {...r,test:routeChecks.get(r.id),configPending:[s,t,mid].some(n=>n.online&&!current(n)),sourceOnline:!!(s.online&&current(s)&&s.listeners?.includes(r.id)&&(r.source===r.relayId||sl?.connected)),targetOnline:!!(t.online&&current(t)&&(r.target===r.relayId||tl?.connected)),relayOnline:!!(mid.online&&current(mid))};});
@@ -107,6 +107,13 @@ const server=http.createServer(async(req,res)=>{try{
  if(p==='/health')return json(res,200,{ok:true});
  if((p==='/transit-node/install.sh'||p==='/install.sh')&&req.method==='GET'){res.writeHead(200,{'Content-Type':'text/x-shellscript; charset=utf-8','Cache-Control':'no-store'});return fs.createReadStream(path.join(ROOT,p==='/install.sh'?'node-bootstrap.sh':'node-install.sh')).pipe(res);}
  if(p==='/transit-node/enroll'&&req.method==='POST')return json(res,200,installations.claim(await body(req,4096),clientIP));
+ if(p==='/transit-node/uninstalled'&&req.method==='POST'){
+  const id=req.headers['x-node-id'],token=String(req.headers.authorization||'').replace(/^Bearer /,''),item=[...state.relays,...state.nodes].find(n=>n.id===id);
+  if(!item||!equal(token,item.token))return json(res,401,{error:'节点认证失败'});
+  const b=await body(req,512);if(!b||typeof b!=='object'||Object.keys(b).length)fail('卸载状态参数不正确');
+  if(item.installation?.status!=='uninstalled'){item.installation={...item.installation,status:'uninstalled',uninstalledAt:new Date().toISOString()};reports.delete(id);audit('节点已卸载',item.name+' · 本机配置默认保留');}
+  return json(res,200,{ok:true});
+ }
  if(p==='/transit-node/release'||p==='/transit-node/status'||p.startsWith('/transit-node/releases/')){
   const id=req.headers['x-node-id'],token=String(req.headers.authorization||'').replace(/^Bearer /,''),item=[...state.relays,...state.nodes].find(n=>n.id===id);
   if(!item||!equal(token,item.token))return json(res,401,{error:'节点认证失败'});
@@ -132,6 +139,7 @@ const server=http.createServer(async(req,res)=>{try{
   r.tls=sanitizeTLS(data.tls,item,state);
   routeChecks.accept(id,data.routeChecks);
   reports.set(id,r);
+  if(item.installation?.status!=='installed'){item.installation={status:'installed',installedAt:new Date().toISOString()};audit('节点已接入',item.name);}
   if(state.relays.some(n=>n.id===id)){const s=history.get(id)||[];s.push({at:Date.now(),rx:r.rx||0,tx:r.tx||0,uptime:r.uptime||0,active:r.active||0,memory:r.memory||0});if(s.length>120)s.shift();history.set(id,s);}
   return json(res,200,agentConfig(id));
  }

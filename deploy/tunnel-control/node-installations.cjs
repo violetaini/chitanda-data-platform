@@ -27,15 +27,15 @@ module.exports=function({dataDir,releaseDir,getState,enrollment,audit,now=Date.n
   const server=new URL(config.controller);if(server.protocol!=='https:'||server.username||server.password||server.pathname!=='/'||server.search||server.hash)fail('请配置有效的 HTTPS 控制端地址',503);
   let available,error;try{available=release();}catch(e){error=e.message;}
   tickets=tickets.filter(v=>v.until>now()&&node(v.id));if(tickets.length>=128)tickets.shift();
-  const ticket=crypto.randomBytes(32).toString('hex'),until=now()+15*60000;
-  tickets.push({digest:hash(ticket),id,credential:hash(n.token),until});save();
+  const installed=n.installation?.status==='installed',ticket=installed?'':crypto.randomBytes(32).toString('hex'),until=installed?null:now()+15*60000;
+  if(!installed){tickets.push({digest:hash(ticket),id,credential:hash(n.token),until});save();}
   const address=config.controllerAddress||'',resolve=address?' --server-address '+quote(address):'';
   let direct='';if(address){const m=address.match(/^(.*):(\d+)$/),ip=m?.[1].replace(/^\[|\]$/g,'');if(!m||!net.isIP(ip)||Number(m[2])!==Number(server.port||443))fail('控制端直达地址须为匹配 HTTPS 端口的 IP',503);direct=server.hostname+':'+(server.port||443)+':'+(net.isIP(ip)===6?'['+ip+']':ip);}
   const github='https://raw.githubusercontent.com/violetaini/chitanda-data-platform/main/deploy/tunnel-control/node-bootstrap.sh';
   const launch=(url,args,origin=false)=>'bash <(curl -fsSL'+(origin&&direct?' --resolve '+quote(direct):'')+' '+quote(url)+') '+args;
   const installArgs='install --server '+quote(server.origin)+' --ticket '+quote(ticket);
-  audit('生成节点安装命令',n.name+' · 有效期 15 分钟');
-  return {nodeId:id,name:n.name,config,expiresAt:new Date(until).toISOString(),available:!!available,release:available,error,repository:'https://github.com/violetaini/chitanda-data-platform',commands:{install:launch(server.origin+'/install.sh',installArgs),installGithub:launch(github,installArgs),installDirect:launch(server.origin+'/install.sh',installArgs+resolve,true),update:launch(server.origin+'/install.sh','update',true),uninstall:'/usr/local/sbin/chitanda-node uninstall',status:'systemctl status chitanda-transit --no-pager',logs:'journalctl -u chitanda-transit -n 50 --no-pager'}};
+  if(!installed)audit('生成节点安装命令',n.name+' · 有效期 15 分钟');
+  return {nodeId:id,name:n.name,installed,action:installed?'uninstall':'install',expiresAt:until?new Date(until).toISOString():null,available:installed||!!available,error:installed?undefined:error,repository:'https://github.com/violetaini/chitanda-data-platform',commands:installed?{github:launch(github,'uninstall'),origin:launch(server.origin+'/install.sh','uninstall',true)}:{github:launch(github,installArgs+resolve),origin:launch(server.origin+'/install.sh',installArgs+resolve,true)}};
  }
  function claim(input,ip){
   if(!net.isIP(ip))fail('节点来源地址不正确',403);

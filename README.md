@@ -4,13 +4,13 @@
 
 ## 节点一键接入
 
-在已部署中台的「节点管理 → 安装指令」复制完整命令，到目标 Linux 服务器的 root 终端执行。命令自动带上你的控制端和短期安装凭据，不再手工保存 JSON。
+在已部署中台的「节点管理 → 安装指令」选择 GitHub 或源站并复制命令，到目标 Linux 服务器的 root 终端执行。命令自动带上你的控制端和短期安装凭据，不再手工保存 JSON。
 
 ```bash
 bash <(curl -fsSL https://datahub.example.com/install.sh) install --server 'https://datahub.example.com' --ticket '从你自己的面板复制15分钟安装凭据'
 ```
 
-上面是格式示例，不能原样执行。面板同时提供国内下载、GitHub 下载及直达源站方式。公开脚本见 [node-bootstrap.sh](deploy/tunnel-control/node-bootstrap.sh)；仅浏览脚本或公开源码不会获得任何节点身份。安装、更新与卸载步骤见 [节点安装文档](docs/node-installation.md)。
+上面是格式示例，不能原样执行。面板仅提供 GitHub 和源站两种方式。安装后入口自动改为“卸载指令”，关闭窗口后可随时重新打开；离线不会重置已安装状态。公开脚本见 [node-bootstrap.sh](deploy/tunnel-control/node-bootstrap.sh)；仅浏览脚本或公开源码不会获得任何节点身份。安装、更新与卸载步骤见 [节点安装文档](docs/node-installation.md)。
 
 ## 目录
 
@@ -73,7 +73,7 @@ npm run build:engine
 
 管理服务仅监听回环，Nginx 和应用必须同时保持精确来源白名单；反向入口必须覆盖客户端提供的来源头。线上启用 HTTPS，取消 `CT_INSECURE=1`。节点仅使用其独立登记凭据，不能获得管理员凭据或工作区 CA 私钥。
 
-节点管理提供 Linux/systemd 的安装、更新、卸载与日志命令，JSON 为高级回退；详见 [节点安装](docs/node-installation.md)。仓库包含服务及 Nginx 模板。部署前配置低权限服务账号、私有状态目录、真实域名和合法来源；不要将原部署历史中的一次性迁移步骤直接重放。
+节点管理根据持久安装状态提供安装或卸载指令，窗口仅保留 GitHub / 源站及复制操作；本机管理命令仍支持更新与日志；详见 [节点安装](docs/node-installation.md)。仓库包含服务及 Nginx 模板。部署前配置低权限服务账号、私有状态目录、真实域名和合法来源；不要将原部署历史中的一次性迁移步骤直接重放。
 
 ## 私有资料与第三方代码
 
