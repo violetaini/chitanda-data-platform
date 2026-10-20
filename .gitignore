@@ -31,3 +31,6 @@ dns-backup-*.json
 node-installations.json
 node-installations.json.tmp
 deploy/tunnel-control/releases/
+
+__pycache__/
+*.pyc

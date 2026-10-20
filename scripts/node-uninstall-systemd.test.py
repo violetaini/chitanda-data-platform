@@ -18,7 +18,7 @@ def ctl(*args,check=True):return subprocess.run(['systemctl',*args,service],capt
 try:
  for p in [binary.parent,helper.parent,etc,state,root/'run',root/'fakebin']:p.mkdir()
  source=installer_source.replace('if command -v python3 >/dev/null && [[ -f $ETC/config.json ]]; then','if false; then')
- source=source.replace('SERVICE=chitanda-transit','SERVICE='+service)
+ source=source.replace('SERVICE=chitanda-transit','SERVICE='+service).replace('chitanda-node-update',service+'-update')
  for old,new in [('/etc/systemd/system/chitanda-transit.service',str(unit)),('/usr/local/bin/chitanda-transit',str(binary)),('/usr/local/sbin/chitanda-node',str(helper)),('/etc/chitanda-transit',str(etc)),('/var/lib/chitanda-transit',str(state)),('/run/chitanda-node-install.lock',str(root/'run/install.lock'))]:source=source.replace(old,new)
  script=root/'installer.sh';script.write_text(source);script.chmod(0o700)
  config=etc/'config.json';config.write_text(json.dumps({'controller':'https://controller.example.com','id':'qa-node','token':'f'*64}));config.chmod(0o600)

@@ -6,11 +6,9 @@
 
 在已部署中台的「节点管理 → 安装指令」选择 GitHub 或源站并复制命令，到目标 Linux 服务器的 root 终端执行。命令自动带上你的控制端和短期安装凭据，不再手工保存 JSON。
 
-```bash
-bash <(curl -fsSL https://datahub.example.com/install.sh) install --server 'https://datahub.example.com' --ticket '从你自己的面板复制15分钟安装凭据'
-```
+面板生成的完整命令从 `/bin/sh` 开始，能自动安装 curl / CA，再补齐 Bash、Python 和其他维护依赖。支持多个发行版、8 种 CPU 架构，以及 systemd / OpenRC / runit / SysV。
 
-上面是格式示例，不能原样执行。面板仅提供 GitHub 和源站两种方式。安装后入口自动改为“卸载指令”，关闭窗口后可随时重新打开；离线不会重置历史安装状态，但会优先展示恢复安装指令；在线节点也可切换“重新安装”。公开脚本见 [node-bootstrap.sh](deploy/tunnel-control/node-bootstrap.sh)；仅浏览脚本或公开源码不会获得任何节点身份。安装、更新与卸载步骤见 [节点安装文档](docs/node-installation.md)。
+面板仅提供 GitHub 和源站两种方式。安装后入口自动改为“卸载指令”，关闭窗口后可随时重新打开；离线不会重置历史安装状态，但会优先展示恢复安装指令；在线节点也可切换“重新安装”。公开脚本见 [node-bootstrap.sh](deploy/tunnel-control/node-bootstrap.sh)；仅浏览脚本或公开源码不会获得任何节点身份。安装、更新与卸载步骤见 [节点安装文档](docs/node-installation.md)，实测发行版与兼容边界见 [Linux 支持范围](docs/linux-support.md)。系统设置可统一配置节点自动更新，默认每小时检查，失败冷却 6 小时；下载校验、备份和启动失败回退自动执行。
 
 ## 目录
 
@@ -62,10 +60,10 @@ npm run test:gateway
 Windows 节点构建：
 
 ```powershell
-npm run build:engine
+npm run build:node-release
 ```
 
-构建脚本在忽略的 `tmp/` 目录获取固定上游提交 `2926cf2c41c85d2177536a4ba2d9931f1ec675f9`，加入本仓库节点源码，再输出 Linux amd64 程序 `tmp/chitanda-transit`。Linux 或 ARM 环境按 [架构与运维](docs/architecture.md) 中的步骤构建。上游固定提交的 `go.mod` 决定所需 Go 工具链版本。
+构建脚本在忽略的 `tmp/` 目录获取固定上游提交 `2926cf2c41c85d2177536a4ba2d9931f1ec675f9`，加入本仓库节点源码，再输出各平台程序和清单到 `tmp/node-release/`。Linux 或 ARM 环境按 [架构与运维](docs/architecture.md) 中的步骤构建。上游固定提交的 `go.mod` 决定所需 Go 工具链版本。
 
 ## 生产部署
 

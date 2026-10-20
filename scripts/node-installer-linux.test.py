@@ -13,8 +13,8 @@ def check(value,message):
  assert value,message
  checks+=1
 try:
- for name in ['etc/systemd/system','etc/chitanda-transit','var/lib/chitanda-transit','var/tmp','var/backups','usr/local/bin','usr/local/sbin','run','fakebin']:(sandbox/name).mkdir(parents=True,exist_ok=True)
- replacements=['/etc/systemd/system/chitanda-transit.service','/usr/local/sbin/chitanda-node','/usr/local/bin/chitanda-transit','/etc/chitanda-transit','/var/lib/chitanda-transit','/run/chitanda-node-install.lock','/var/tmp/chitanda-node.XXXXXXXX','/var/backups/chitanda-node.XXXXXXXX']
+ for name in ['etc/systemd/system','etc/init.d','etc/sv','var/service','run/systemd/system','etc/chitanda-transit','var/lib/chitanda-transit','var/tmp','var/backups','usr/local/bin','usr/local/sbin','run','fakebin']:(sandbox/name).mkdir(parents=True,exist_ok=True)
+ replacements=['/etc/systemd/system/chitanda-node-update.service','/etc/systemd/system/chitanda-node-update.timer','/etc/init.d/chitanda-node-update','/etc/sv/chitanda-node-update','/var/service/chitanda-node-update','/etc/systemd/system/chitanda-transit.service','/usr/local/sbin/chitanda-node','/usr/local/bin/chitanda-transit','/etc/chitanda-transit','/var/lib/chitanda-transit','/run/chitanda-node-install.lock','/var/tmp/chitanda-node.XXXXXXXX','/var/backups/chitanda-node.XXXXXXXX']
  source=installer_source.replace('if command -v python3 >/dev/null && [[ -f $ETC/config.json ]]; then','if false; then')
  for name in replacements:source=source.replace(name,str(sandbox)+name)
  script=sandbox/'installer.sh';script.write_text(source);script.chmod(0o700)
@@ -28,9 +28,9 @@ import sys,os,json,pathlib,subprocess
 root=pathlib.Path(os.environ['FAKE_ROOT']);cmd=pathlib.Path(sys.argv[0]).name;args=sys.argv[1:]
 if cmd=='uname':print('Linux' if '-s' in args else os.environ.get('FAKE_ARCH','x86_64'));sys.exit(0)
 if cmd in ('getent','id','groupadd','useradd'):
- if cmd=='id':print('1001')
+ if cmd=='id':print('0' if len(args)==1 else '1001')
  sys.exit(0)
-if cmd=='sleep':sys.exit(0)
+if cmd in ('sleep','setcap'):sys.exit(0)
 if cmd=='install':
  out=[];i=0
  while i<len(args):
@@ -39,7 +39,9 @@ if cmd=='install':
  assert str(root) in out[-1], 'installation target escaped sandbox'
  sys.exit(subprocess.run(['/usr/bin/install',*out]).returncode)
 if cmd=='systemctl':
+ if any('chitanda-node-update' in a for a in args):sys.exit(0)
  p=root/'service.json';s=json.loads(p.read_text());op=args[0]
+ if op in ('start','restart','stop'):s['calls']=s.get('calls',0)+1
  if op=='is-active':sys.exit(0 if s['active'] else 3)
  if op=='is-enabled':sys.exit(0 if s['enabled'] else 1)
  if op=='stop':s['active']=False
@@ -53,9 +55,11 @@ if cmd=='systemctl':
 if cmd=='curl':
  f=json.loads((root/'fixture.json').read_text());url=next(a for a in args if a.startswith('https://'));output=pathlib.Path(args[args.index('-o')+1]);assert '--proto' in args and '--tlsv1.2' in args;assert 'a'*64 not in ' '.join(args),'long-term token exposed in argv'
  asset={'url':'/transit-node/releases/linux-'+os.environ.get('FAKE_PLATFORM','amd64'),'sha256':f['sha'],'size':len(f['binary'].encode())};release={'version':f['version'],'assets':{'linux-'+os.environ.get('FAKE_PLATFORM','amd64'):asset}}
+ if 'policy' in f:release['updatePolicy']=f['policy']
+ if 'installer' in f:release['installer']=f['installer']
  if url.endswith('/install.sh'):
   if (root/'fail-download').exists():sys.exit(22)
-  value=(root/'installer.sh').read_text()
+  value=f.get('installerBody',(root/'installer.sh').read_text())
   if (root/'tamper-script').exists():value+='\ntouch '+str(root/'must-not-execute')+'\n'
   output.write_text(value)
  elif url.endswith('/enroll'):value={'config':{'id':f['id'],'token':'a'*64,'role':'agent','controller':'https://control.example.com','controllerAddress':'8.8.8.8:443','ca':'PUBLIC CA'},'release':release};output.write_text(json.dumps(value))
@@ -66,7 +70,7 @@ if cmd=='curl':
  sys.exit(0)
 raise SystemExit('unexpected fake command: '+cmd)
 '''
- for name in ['uname','getent','id','groupadd','useradd','install','systemctl','sleep','curl']:
+ for name in ['uname','getent','id','groupadd','useradd','install','systemctl','sleep','curl','setcap']:
   p=sandbox/'fakebin'/name;p.write_text(fake);p.chmod(0o700)
  env={**os.environ,'FAKE_ROOT':str(sandbox),'PATH':str(sandbox/'fakebin')+':'+os.environ['PATH']}
  def run(action,*extra,success=True,environment=None):
@@ -91,6 +95,23 @@ raise SystemExit('unexpected fake command: '+cmd)
  fixture.write_text(json.dumps(payload('2.7.3')));(sandbox/'fail-download').touch();run('update',success=False);(sandbox/'fail-download').unlink();check(binary.read_bytes()==old,'download failure preserves old binary')
  (sandbox/'fail-start').touch();run('update',success=False);check(binary.read_bytes()==old and config.read_bytes()==oldconfig,'failed service start restores binary and config');check(json.loads(statefile.read_text())['active'],'rollback restarts previous service')
  run('update');check(b'2.7.3' in binary.read_bytes(),'successful update replaces binary');check(json.loads(config.read_text())['dataGateway']['domain']=='keep.example.com','update preserves local business config')
+
+ # Automatic updates exercise policy, no-op behavior, rollback and cooldown.
+ for name in ['update-state.json','updates.disabled']:(sandbox/'etc/chitanda-transit'/name).unlink(missing_ok=True)
+ calls=lambda:json.loads(statefile.read_text()).get('calls',0)
+ fixture.write_text(json.dumps(payload('2.7.3')));before_calls=calls();run('auto-update');check(calls()==before_calls,'same version does not restart the service')
+ (sandbox/'etc/chitanda-transit/update-state.json').unlink(missing_ok=True)
+ p=payload('2.7.4');p['policy']={'enabled':False};fixture.write_text(json.dumps(p));run('auto-update');check(b'2.7.3' in binary.read_bytes(),'controller can pause automatic upgrades')
+ (sandbox/'etc/chitanda-transit/update-state.json').unlink(missing_ok=True)
+ fixture.write_text(json.dumps(payload('2.7.4')));run('auto-update-disable');run('auto-update');check(b'2.7.3' in binary.read_bytes(),'local pause is respected');run('auto-update-enable');run('auto-update');check(b'2.7.4' in binary.read_bytes(),'automatic upgrade preserves node and installs a newer version')
+ before=binary.read_bytes();(sandbox/'etc/chitanda-transit/update-state.json').unlink(missing_ok=True);fixture.write_text(json.dumps(payload('2.7.5')));(sandbox/'fail-start').touch();run('auto-update',success=False);check(binary.read_bytes()==before and json.loads(statefile.read_text())['active'],'automatic failure restores and restarts previous program')
+ before_calls=calls();run('auto-update');check(calls()==before_calls and binary.read_bytes()==before,'same failed release is cooled down without repeated restarts')
+ (sandbox/'etc/chitanda-transit/update-state.json').unlink(missing_ok=True);fixture.write_text(json.dumps(payload('2.7.2')));run('auto-update');check(binary.read_bytes()==before,'automatic updates never downgrade')
+ (sandbox/'etc/chitanda-transit/update-state.json').unlink(missing_ok=True)
+ new_script=source+'\n# new reviewed maintenance revision\n';p=payload('2.7.6');p['installer']={'url':'/transit-node/install.sh','size':len(new_script.encode()),'sha256':hashlib.sha256(new_script.encode()).hexdigest()};p['installerBody']=new_script;fixture.write_text(json.dumps(p));run('auto-update');check(b'2.7.6' in binary.read_bytes() and (sandbox/'usr/local/sbin/chitanda-node').read_text()==new_script,'automatic update securely refreshes the installer before applying the release')
+ check(json.loads(config.read_text())['dataGateway']['domain']=='keep.example.com','automatic updates retain business configuration')
+ p=payload('2.7.7');p['installer']={'url':'/transit-node/install.sh','size':len(new_script.encode()),'sha256':'0'*64};p['installerBody']=new_script;fixture.write_text(json.dumps(p));(sandbox/'etc/chitanda-transit/update-state.json').unlink(missing_ok=True);run('auto-update',success=False);check(b'2.7.6' in binary.read_bytes(),'untrusted installer checksum never executes')
+ oldservice=json.loads(statefile.read_text());oldservice['active']=False;statefile.write_text(json.dumps(oldservice));before_calls=calls();run('auto-update');check(calls()==before_calls,'automatic updater never restarts an intentionally stopped service');oldservice['active']=True;statefile.write_text(json.dumps(oldservice))
  cert=sandbox/'etc/chitanda-transit/keep.crt';cert.write_text('certificate fixture');(sandbox/'etc/chitanda-transit/installer.json').unlink();(sandbox/'usr/local/sbin/chitanda-node').unlink();run('uninstall');check(config.exists() and cache.exists() and cert.exists(),'default uninstall preserves config, cache and certificate');check(not binary.exists() and not unit.exists(),'legacy uninstall removes owned program and service without requiring helper or marker');check(not json.loads(statefile.read_text())['active'] and not json.loads(statefile.read_text())['enabled'],'uninstall stops and disables the service')
  run('install');saved=unit.read_text();unit.write_text(saved.replace('ExecStart=', 'ExecStart=/unknown '));run('uninstall',success=False);check(binary.exists() and json.loads(statefile.read_text())['active'],'foreign service definition is never stopped or removed');unit.write_text(saved);run('uninstall','--purge');check(not config.exists() and not cache.exists() and cert.exists(),'explicit purge clears known config without deleting certificate')
  run('install',environment={'FAKE_ARCH':'aarch64','FAKE_PLATFORM':'arm64'});check(json.loads((sandbox/'etc/chitanda-transit/installer.json').read_text())['arch']=='arm64','architecture detection selects arm64');run('uninstall','--purge')

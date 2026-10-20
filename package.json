@@ -1,6 +1,6 @@
 {
   "name": "chitanda-data-platform-workspace",
-  "version": "2.12.1",
+  "version": "2.13.0",
   "private": true,
   "description": "Chitanda 数据中台管理：控制面板、轻量节点及 HTTPS 数据接入",
   "engines": {
@@ -15,7 +15,8 @@
     "test:gateway": "go -C deploy/tunnel-control/gateway test ./...",
     "test:ui": "node scripts/tunnel-control-account-smoke.cjs && node scripts/tunnel-control-dashboard-smoke.cjs && node scripts/tunnel-control-node-cards-smoke.cjs && node scripts/tunnel-control-route-test-smoke.cjs && node scripts/tunnel-control-settings-smoke.cjs && node scripts/tunnel-model-smoke.cjs && node scripts/node-onboarding-smoke.cjs",
     "build:engine": "powershell -NoProfile -File deploy/tunnel-control/build-engine.ps1",
-    "build:node-release": "powershell -NoProfile -File deploy/tunnel-control/build-node-release.ps1"
+    "build:node-release": "powershell -NoProfile -File deploy/tunnel-control/build-node-release.ps1",
+    "sync:installer": "python scripts/sync-node-installer.py"
   },
   "devDependencies": {
     "playwright": "1.60.0"
