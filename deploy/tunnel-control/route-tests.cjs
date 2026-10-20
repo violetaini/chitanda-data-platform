@@ -62,7 +62,7 @@ module.exports=function createRouteTests({getState,getReport,getSettings=()=>({e
    error('该数据通道正在测试中');
   }
   if(previous&&time-previous.created<10000)error('请间隔 10 秒后重试',429);
-  for(const id of new Set(require('./route-path.cjs').path(route))){const r=getReport(id);if(!r.online)error('相关节点离线，暂时无法测试');if(r.revision!==state.version)error('节点配置同步中，请稍后测试');if(r.capabilities?.routeProbe!==1)error('相关节点尚未支持线路测试，请先升级节点');if((route.relayIds?.length||1)>1&&r.capabilities?.relayChain!==1)error('相关节点尚未支持多段路径，请先升级节点');}
+  for(const id of new Set(require('./route-path.cjs').path(route))){const r=getReport(id);if(!r.online)error('相关节点离线，暂时无法测试');if(r.revision!==state.version)error('节点配置同步中，请稍后测试');if(route.direct&&r.capabilities?.directEndpoint!==1)error('相关节点需要更新后才能使用两端直连');if(r.capabilities?.routeProbe!==1)error('相关节点尚未支持线路测试，请先升级节点');if((route.relayIds?.length||1)>1&&r.capabilities?.relayChain!==1)error('相关节点尚未支持多段路径，请先升级节点');}
   const active=[...jobs.values()].filter(j=>busy(j.status));if(active.length>=4)error('当前测试较多，请稍后重试',429);if(active.some(j=>j.source===route.source))error('源节点正在执行其他测试，请稍后重试',429);
   jobs.set(route.id,{id:'check-'+crypto.randomBytes(16).toString('hex'),routeId:route.id,source:route.source,revision:state.version,trigger,status:'queued',created:time,expires:time+90000,createdAt:new Date(time).toISOString(),samples:[]});return get(route.id);
  }

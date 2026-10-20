@@ -30,7 +30,7 @@ module.exports=function({getState,validateRoute,ensureCertificates,audit}){
   if(!['single','bidirectional'].includes(mode)||!name||name.length>60)fail('请选择隧道类型并填写 1–60 字符的名称');
   if(old&&bound(old)&&mode!==old.mode)fail('已绑定域名的隧道不能直接改变单双向类型',409);
   const count=mode==='bidirectional'?2:1;if(s.routes.length-(old?.routeIds.length||0)+count>128)fail('最多配置 128 条底层线路');
-  const before=s.routes,previousRelays=s.relays,previousTunnels=structuredClone(normalize(s));s.relays=structuredClone(s.relays);
+  const before=s.routes,previousRelays=s.relays,previousNodes=s.nodes,previousTunnels=structuredClone(normalize(s));s.relays=structuredClone(s.relays);s.nodes=structuredClone(s.nodes);
   try{
    const first=old&&before.find(r=>r.id===old.routeIds[0]);
    const values={...first,...input,name,enabled:input.enabled??first?.enabled??true};
@@ -41,7 +41,7 @@ module.exports=function({getState,validateRoute,ensureCertificates,audit}){
     const prev=old&&before.find(r=>r.id===old.routeIds[1]);
     // Keep the old reverse route visible to endpoint guards while validating.
     if(prev)s.routes.push(prev);
-    const b=validateRoute({...values,...prev,...input,name,enabled:values.enabled,source:a.target,target:a.source,listenPort:input.reverseListenPort??prev?.listenPort??a.listenPort,targetPort:input.reverseTargetPort??prev?.targetPort??a.targetPort,...(a.relayIds?{relayIds:[...a.relayIds].reverse(),relayId:a.relayIds.at(-1)}:{})},prev?.id);
+    const b=validateRoute({...values,...prev,...input,name,enabled:values.enabled,source:a.target,target:a.source,direct:a.direct===true,listenPort:input.reverseListenPort??prev?.listenPort??a.listenPort,targetPort:input.reverseTargetPort??prev?.targetPort??a.targetPort,...(a.relayIds?{relayIds:[...a.relayIds].reverse(),relayId:a.relayIds.at(-1)}:{})},prev?.id);
     s.routes=s.routes.filter(r=>r.id!==b.id).concat({...b,createdAt:prev?.createdAt||b.createdAt});ids.push(b.id);
    }
    s.routes=s.routes.map(r=>r.id===a.id?{...r,createdAt:first?.createdAt||r.createdAt}:r);
@@ -49,7 +49,7 @@ module.exports=function({getState,validateRoute,ensureCertificates,audit}){
    const t={id:old?.id||'tunnel-'+crypto.randomBytes(8).toString('hex'),name,mode,routeIds:ids,createdAt:old?.createdAt||new Date().toISOString()};
    s.tunnels=previousTunnels.map(v=>v.id===old?.id?t:v);if(!old)s.tunnels.push(t);
    s.version++;audit(old?'更新隧道':'创建隧道',name+' · '+(count===2?'双向':'单向'));return t;
-  }catch(e){s.routes=before;s.relays=previousRelays;s.tunnels=previousTunnels;throw e;}
+  }catch(e){s.routes=before;s.relays=previousRelays;if(previousNodes===undefined)delete s.nodes;else s.nodes=previousNodes;s.tunnels=previousTunnels;throw e;}
  }
  function remove(id){const s=getState(),t=get(id);if(bound(t))fail('请先迁移此隧道绑定的业务域名，避免中断生产解析',409);s.routes=s.routes.filter(r=>!t.routeIds.includes(r.id));s.tunnels=s.tunnels.filter(v=>v.id!==id);s.version++;audit('删除隧道',t.name);}
  function merge(input){

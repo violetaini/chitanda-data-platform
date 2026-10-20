@@ -265,3 +265,6 @@ label{font-size:15px}input,select,.certificate-settings textarea{font-size:16px}
 
 /* Ordered path editor: the same controls cover direct and multi-relay routes. */
 .route-hop-editor{padding:14px 18px;border:1px solid var(--border);border-radius:14px;margin:18px 0;background:#f7f1fa55}.route-hop-editor label{margin:0 0 10px}.route-hop-row{display:flex;align-items:center;gap:12px}.route-hop-row label{flex:1;min-width:0}.route-path-preview{display:grid;gap:7px;padding:14px 18px;border-left:3px solid #b59bc6;background:#f4eef7;border-radius:0 12px 12px 0;margin-bottom:18px;font-size:15px;overflow-wrap:anywhere}.route-path-preview strong{font-size:13px;color:var(--muted)}.route-path-preview b{color:#b59bc6;margin:0 6px}.route-advanced{margin-top:20px}.route-advanced summary{cursor:pointer;font-size:16px;color:var(--muted)}.tunnel-endpoints{flex-wrap:wrap}.route-path{flex-wrap:wrap}
+
+/* Regional choices stay independent of the number of physical servers. */
+#route-form> .form-grid:first-of-type small{font-weight:400;color:var(--muted);margin-left:6px;font-size:13px}#route-form .dialog-intro{line-height:1.8}#route-form .form-note{line-height:1.7}#route-form #reverse-ports{border-top:1px dashed var(--border);padding-top:16px;margin-top:10px}

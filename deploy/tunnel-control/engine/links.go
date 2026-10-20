@@ -248,7 +248,14 @@ func (e *Engine) openRouteContext(ctx context.Context, id, kind string) (net.Con
 		return nil, errors.New("unsupported route operation")
 	}
 	cfg := e.config()
-	if cfg.Role != "relay" {
+	localBroker := false
+	for _, r := range cfg.Routes {
+		if r.ID == id && r.Enabled && r.Source == cfg.ID && r.firstRelay() == cfg.ID {
+			localBroker = true
+			break
+		}
+	}
+	if !localBroker {
 		cli, hello, err := e.routeClient(id)
 		if err != nil {
 			return nil, err
@@ -269,7 +276,7 @@ func (e *Engine) openRouteContext(ctx context.Context, id, kind string) (net.Con
 		if r.ID != id || !r.Enabled || r.Source != cfg.ID || r.firstRelay() != cfg.ID {
 			continue
 		}
-		c, err := (&net.Dialer{}).DialContext(ctx, "tcp", e.brokerAddress)
+		c, err := (&net.Dialer{}).DialContext(ctx, "tcp", e.localBrokerAddress())
 		if err != nil {
 			return nil, err
 		}
@@ -298,6 +305,7 @@ func (e *Engine) runMultiAgent() error {
 		}
 		break
 	}
+	e.reconcileEndpointServer()
 	e.controlLoop()
 	return nil
 }
@@ -309,6 +317,7 @@ func (e *Engine) revoke() {
 		ln.Close()
 	}
 	e.listeners = map[string]net.Listener{}
+	e.cfg.SelfRelay = nil
 	e.cfg.Nodes = nil
 	e.cfg.Routes = nil
 	e.cfg.Relays = nil
@@ -317,6 +326,7 @@ func (e *Engine) revoke() {
 	}
 	e.lastError = "node credentials revoked"
 	e.mu.Unlock()
+	e.reconcileEndpointServer()
 	for _, l := range links {
 		l.cancel()
 		l.client.Close()

@@ -27,7 +27,7 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.8.1"
+const version = "2.9.0"
 
 type Route struct {
 	RelayIDs   []string `json:"relayIds,omitempty"`
@@ -94,32 +94,35 @@ type Hello struct {
 	Error      string `json:"error,omitempty"`
 }
 type Engine struct {
-	syncMu        sync.Mutex
-	checkMu       sync.Mutex
-	checkBusy     bool
-	checkResults  map[string]RouteCheckResult
-	links         map[string]*Link
-	cert          atomic.Pointer[tls.Certificate]
-	publicCert    atomic.Pointer[tls.Certificate]
-	serverTLS     atomic.Pointer[tls.Config]
-	transports    []string
-	connections   map[*slotConn]Hello
-	mu            sync.RWMutex
-	cfg           Config
-	started       time.Time
-	rx            atomic.Int64
-	tx            atomic.Int64
-	active        atomic.Int64
-	connects      atomic.Int64
-	latency       atomic.Int64
-	lastError     string
-	pools         map[string]chan net.Conn
-	listeners     map[string]net.Listener
-	outbound      chan struct{}
-	slots         chan struct{}
-	brokerAddress string
-	clientMu      sync.Mutex
-	cli           *client.Client
+	endpointMu       sync.Mutex
+	endpointStop     chan struct{}
+	endpointStopping bool
+	syncMu           sync.Mutex
+	checkMu          sync.Mutex
+	checkBusy        bool
+	checkResults     map[string]RouteCheckResult
+	links            map[string]*Link
+	cert             atomic.Pointer[tls.Certificate]
+	publicCert       atomic.Pointer[tls.Certificate]
+	serverTLS        atomic.Pointer[tls.Config]
+	transports       []string
+	connections      map[*slotConn]Hello
+	mu               sync.RWMutex
+	cfg              Config
+	started          time.Time
+	rx               atomic.Int64
+	tx               atomic.Int64
+	active           atomic.Int64
+	connects         atomic.Int64
+	latency          atomic.Int64
+	lastError        string
+	pools            map[string]chan net.Conn
+	listeners        map[string]net.Listener
+	outbound         chan struct{}
+	slots            chan struct{}
+	brokerAddress    string
+	clientMu         sync.Mutex
+	cli              *client.Client
 }
 
 func safeEqual(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }
@@ -187,7 +190,7 @@ func (e *Engine) report() map[string]any {
 			}
 		}
 	}
-	return map[string]any{"routeChecks": e.checkReports(), "capabilities": map[string]any{"routeProbe": 1, "relayChain": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
+	return map[string]any{"routeChecks": e.checkReports(), "capabilities": map[string]any{"routeProbe": 1, "relayChain": 1, "directEndpoint": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
 }
 func (e *Engine) syncConfig() error {
 	e.syncMu.Lock()
@@ -240,11 +243,11 @@ func (e *Engine) syncConfig() error {
 	e.cfg.CredentialVersion = update.CredentialVersion
 	e.cfg.CA = update.CA
 	e.cfg.Relays = update.Relays
+	e.cfg.SelfRelay = update.SelfRelay
 	if update.SelfRelay != nil {
-		e.cfg.SelfRelay = update.SelfRelay
 		e.cfg.PSK = update.SelfRelay.PSK
 		e.cfg.Path = update.SelfRelay.Path
-		if e.cfg.Listen == "" {
+		if e.cfg.Listen == "" || cfg.Role == "agent" {
 			e.cfg.Listen = fmt.Sprintf(":%d", update.SelfRelay.Port)
 		}
 	}
@@ -269,6 +272,8 @@ func (e *Engine) syncConfig() error {
 		e.reconcileLinks()
 		e.reconcileListeners()
 	}
+	e.pruneRevoked()
+	e.reconcileEndpointServer()
 	e.startChecks(update.Checks)
 	return nil
 }
@@ -280,6 +285,7 @@ func (e *Engine) controlLoop() {
 			// Keep existing data paths recoverable even while control is unreachable.
 			e.reconcileLinks()
 			e.reconcileListeners()
+			e.reconcileEndpointServer()
 		}
 		time.Sleep(15 * time.Second)
 	}
@@ -542,11 +548,16 @@ func (s *slotConn) CloseWrite() error {
 	}
 	return nil
 }
+func (e *Engine) localBrokerAddress() string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.brokerAddress
+}
 func (e *Engine) brokerConnection(ctx context.Context, address string) (net.Conn, error) {
 	if address != "bridge.internal:1" {
 		return nil, errors.New("target denied")
 	}
-	return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", e.brokerAddress)
+	return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", e.localBrokerAddress())
 }
 func (e *Engine) serveBroker(ln net.Listener) {
 	for {
@@ -563,7 +574,8 @@ func (e *Engine) serveBroker(ln net.Listener) {
 		}
 	}
 }
-func (e *Engine) runRelay() error {
+func (e *Engine) runRelay() error { return e.runRelayUntil(nil) }
+func (e *Engine) runRelayUntil(stop <-chan struct{}) error {
 	cfg := e.config()
 	psk, err := base64.StdEncoding.DecodeString(cfg.PSK)
 	if err != nil || len(psk) < 32 {
@@ -579,7 +591,9 @@ func (e *Engine) runRelay() error {
 		return err
 	}
 	defer ln.Close()
+	e.mu.Lock()
 	e.brokerAddress = ln.Addr().String()
+	e.mu.Unlock()
 	go e.serveBroker(ln)
 	protocolHandler := server.NewServer(cfg.Path, psk, replays, http.NotFoundHandler(), 0)
 	protocolHandler.SetDialTargetForTest(e.brokerConnection)
@@ -607,6 +621,7 @@ func (e *Engine) runRelay() error {
 	e.transports = []string{"h2", "h3"}
 	e.mu.Unlock()
 	e.serverTLS.Store(tlsConfig)
+	defer func() { e.serverTLS.Store(nil); e.mu.Lock(); e.transports = nil; e.mu.Unlock() }()
 	if publicCertificate != nil {
 		e.publicCert.Store(publicCertificate)
 	}
@@ -648,7 +663,11 @@ func (e *Engine) runRelay() error {
 	e.reconcileLinks()
 	e.reconcileListeners()
 	log.Printf("relay listening %s (H2 TCP + H3 UDP / TLS 1.3)", cfg.Listen)
-	err = <-errCh
+	select {
+	case err = <-errCh:
+	case <-stop:
+		err = nil
+	}
 	h3.Close()
 	srv.Close()
 	return err

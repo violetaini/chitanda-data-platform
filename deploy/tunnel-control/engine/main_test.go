@@ -71,41 +71,45 @@ func TestRelayIsFixedLocalEndpoint(t *testing.T) {
 	}
 }
 func TestRelaySourceUsesExistingReversePool(t *testing.T) {
-	e := testEngine(t)
-	e.cfg.ID = "mainland"
-	e.cfg.Role = "relay"
-	e.cfg.Routes[0].RelayID = "mainland"
-	dest := connectTest(t, e)
-	send(dest, Hello{Kind: "accept", Node: "international", Token: strings.Repeat("b", 64)})
-	go func() {
-		h, err := receive(dest)
-		if err != nil || h.Kind != "open" {
-			return
-		}
-		send(dest, Hello{OK: true})
-		buf := make([]byte, 6)
-		if _, err = io.ReadFull(dest, buf); err == nil {
-			dest.Write(buf)
-		}
-	}()
-	c, err := e.openRoute("test-route")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	c.SetDeadline(time.Now().Add(5 * time.Second))
-	h, err := receive(c)
-	if err != nil || !h.OK {
-		t.Fatal("relay reverse route failed", h, err)
-	}
-	c.Write([]byte("origin"))
-	buf := make([]byte, 6)
-	if _, err = io.ReadFull(c, buf); err != nil || string(buf) != "origin" {
-		t.Fatal("relay reverse bytes failed", err)
-	}
-	if c, err := e.openRoute("not-configured"); err == nil {
-		c.Close()
-		t.Fatal("arbitrary local route allowed")
+	for _, role := range []string{"relay", "agent"} {
+		t.Run(role, func(t *testing.T) {
+			e := testEngine(t)
+			e.cfg.ID = "mainland"
+			e.cfg.Role = role
+			e.cfg.Routes[0].RelayID = "mainland"
+			dest := connectTest(t, e)
+			send(dest, Hello{Kind: "accept", Node: "international", Token: strings.Repeat("b", 64)})
+			go func() {
+				h, err := receive(dest)
+				if err != nil || h.Kind != "open" {
+					return
+				}
+				send(dest, Hello{OK: true})
+				buf := make([]byte, 6)
+				if _, err = io.ReadFull(dest, buf); err == nil {
+					dest.Write(buf)
+				}
+			}()
+			c, err := e.openRoute("test-route")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			c.SetDeadline(time.Now().Add(5 * time.Second))
+			h, err := receive(c)
+			if err != nil || !h.OK {
+				t.Fatal("relay reverse route failed", h, err)
+			}
+			c.Write([]byte("origin"))
+			buf := make([]byte, 6)
+			if _, err = io.ReadFull(c, buf); err != nil || string(buf) != "origin" {
+				t.Fatal("relay reverse bytes failed", err)
+			}
+			if c, err := e.openRoute("not-configured"); err == nil {
+				c.Close()
+				t.Fatal("arbitrary local route allowed")
+			}
+		})
 	}
 }
 func TestBrokerAuthenticationAndTargetBoundary(t *testing.T) {
