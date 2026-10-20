@@ -11,6 +11,8 @@ import (
 )
 
 type TunnelAccess struct {
+	HeaderURL  bool   `json:"headerURL"`
+	Legacy     bool   `json:"legacy"`
 	TunnelID   string `json:"tunnelId"`
 	RouteID    string `json:"routeId"`
 	Domain     string `json:"domain"`

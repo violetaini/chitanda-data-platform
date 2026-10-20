@@ -160,6 +160,21 @@ func (e *Engine) acceptOnLink(l *Link) {
 				c.Close()
 				break
 			}
+			if route.HTTPAccess != nil {
+				if send(c, Hello{OK: true}) != nil {
+					c.Close()
+					break
+				}
+				if h.Kind == "probe" {
+					c.SetReadDeadline(time.Now().Add(3 * time.Second))
+					receive(c)
+					c.Close()
+					break
+				}
+				e.serveHeaderHTTP(c, route.ID)
+				c.Close()
+				break
+			}
 			dest, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(route.TargetPort)), 8*time.Second)
 			if err != nil {
 				send(c, Hello{Error: "service unavailable"})

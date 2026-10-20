@@ -1,0 +1,88 @@
+--- a/admin/server.js
++++ b/admin/server.js
+@@ -104,8 +104,9 @@
+ const CONTENT_SEED_PATH = path.resolve(
+   process.env.CHITANDA_CONTENT_SEED_PATH || path.join(__dirname, "content-seed.json")
+ );
+-const SYNC_TOKEN = process.env.CHITANDA_SYNC_TOKEN || "";
++const SYNC_TOKEN = process.env.CHITANDA_SYNC_TOKEN || process.env.CHITANDA_TUNNEL_TOKEN || "";
+ const TUNNEL_TOKEN = process.env.CHITANDA_TUNNEL_TOKEN || "";
++const SYNC_TARGET = process.env.CHITANDA_SYNC_TARGET || "";
+ const SYNC_GATEWAY_TOKEN = TUNNEL_TOKEN || process.env.CHITANDA_SYNC_GATEWAY_TOKEN || "";
+ const syncAuthHeaders = () => ({
+   ...(!TUNNEL_TOKEN ? { "X-Sync-Token": SYNC_TOKEN } : {}),
+@@ -954,7 +955,8 @@
+ 
+   const headerToken = request.headers["x-sync-token"];
+   return timingSafeTokenEqual(typeof headerToken === "string" ? headerToken : "", SYNC_TOKEN) ||
+-    timingSafeTokenEqual(readBearerToken(request), SYNC_TOKEN);
++    timingSafeTokenEqual(readBearerToken(request), SYNC_TOKEN) ||
++    Boolean(TUNNEL_TOKEN && timingSafeTokenEqual(readBearerToken(request), TUNNEL_TOKEN));
+ };
+ 
+ const getContentType = (filePath) => MIME_TYPES.get(path.extname(filePath).toLowerCase()) || "application/octet-stream";
+@@ -5377,7 +5379,12 @@
+   // Keep the deadline active while callers consume the response body too.
+   const deadline = AbortSignal.timeout(timeoutMs);
+   const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+-  return fetch(target, { ...options, signal });
++  let headers = options.headers;
++  if (TUNNEL_TOKEN && SYNC_TARGET && SYNC_PEERS.some(peer => String(target).startsWith(peer.replace(/\/+$/, "") + "/"))) {
++    const requestURL = new URL(target);
++    headers = { ...headers, "X-Target-URL": new URL(requestURL.pathname + requestURL.search, SYNC_TARGET).href };
++  }
++  return fetch(target, { ...options, headers, signal });
+ };
+ 
+ const RUNTIME_SERVICE_JSON_MAX_BYTES = 4 * 1024 * 1024;
+@@ -7099,7 +7106,7 @@
+   }
+ 
+   if (method === "GET" && pathname === "/api/admin/bangumi/cache") {
+-    const nodes = await collectBangumiCacheNodes({ readLocal: () => readLocalBangumiCache(db), peers: SYNC_PEERS, token: TUNNEL_TOKEN ? "" : SYNC_TOKEN, gatewayToken: SYNC_GATEWAY_TOKEN });
++    const nodes = await collectBangumiCacheNodes({ readLocal: () => readLocalBangumiCache(db), peers: SYNC_PEERS, token: TUNNEL_TOKEN ? "" : SYNC_TOKEN, gatewayToken: SYNC_GATEWAY_TOKEN, targetBase: SYNC_TARGET });
+     sendJson(response, 200, { ok: true, cache: nodes[0].cache, nodes });
+     return;
+   }
+@@ -7111,7 +7118,7 @@
+     if (!Number.isSafeInteger(index) || index < 0 || !SYNC_PEERS[index] || !/^[a-f0-9]{24}\.webp$/.test(filename)) {
+       sendError(response, 400, "节点或封面文件名不正确"); return;
+     }
+-    await sendBangumiCover(response, () => fetchBangumiPeerCover({ peer: SYNC_PEERS[index], token: TUNNEL_TOKEN ? "" : SYNC_TOKEN, gatewayToken: SYNC_GATEWAY_TOKEN, filename }));
++    await sendBangumiCover(response, () => fetchBangumiPeerCover({ peer: SYNC_PEERS[index], token: TUNNEL_TOKEN ? "" : SYNC_TOKEN, gatewayToken: SYNC_GATEWAY_TOKEN, targetBase: SYNC_TARGET, filename }));
+     return;
+   }
+ 
+--- a/admin/bangumi-cache-status.js
++++ b/admin/bangumi-cache-status.js
+@@ -105,7 +105,7 @@
+     Number.isSafeInteger(item.bytes) && item.bytes >= 0 && typeof item.cachedAt === "string") &&
+   ["cached", "missing", "invalid"].every(status => report.summary[`${status}Works`] === report.items.filter(item => item.status === status).length);
+ 
+-async function collectBangumiCacheNodes({ readLocal, peers = [], token = "", gatewayToken = "", fetchImpl = fetch, timeoutMs = 8000 }) {
++async function collectBangumiCacheNodes({ readLocal, peers = [], token = "", gatewayToken = "", targetBase = "", fetchImpl = fetch, timeoutMs = 8000 }) {
+   const local = (async () => {
+     try { const cache = await readLocal(); return { key: "local", local: true, nodeId: cache.nodeId, cache, error: "" }; }
+     catch { return { key: "local", local: true, nodeId: "", cache: null, error: "本机缓存检查失败，请检查服务器。" }; }
+@@ -115,7 +115,7 @@
+     try {
+       if (!token && !gatewayToken) throw new Error("同步连接未启用，无法查询另一节点。");
+       const response = await fetchImpl(`${peer}/api/sync/bangumi/cache`, {
+-        headers: { ...(token ? { "X-Sync-Token": token } : {}), ...(gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {}), Accept: "application/json" },
++        headers: { ...(token ? { "X-Sync-Token": token } : {}), ...(gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {}), ...(targetBase ? { "X-Target-URL": new URL("/api/sync/bangumi/cache", targetBase).href } : {}), Accept: "application/json" },
+         redirect: "error", signal: AbortSignal.timeout(timeoutMs)
+       });
+       if (!response.ok) throw new Error(`另一节点查询失败（HTTP ${response.status}）。`);
+@@ -151,10 +151,10 @@
+   } finally { await handle.close(); }
+ }
+ 
+-async function fetchBangumiPeerCover({ peer, token, gatewayToken = "", filename, fetchImpl = fetch, timeoutMs = 8000 }) {
++async function fetchBangumiPeerCover({ peer, token, gatewayToken = "", targetBase = "", filename, fetchImpl = fetch, timeoutMs = 8000 }) {
+   if ((!token && !gatewayToken) || !/^[a-f0-9]{24}\.webp$/.test(filename || "")) throw new Error("Invalid cover request");
+   const response = await fetchImpl(`${peer}/api/sync/bangumi/cover?file=${filename}`, {
+-    headers: { ...(token ? { "X-Sync-Token": token } : {}), ...(gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {}), Accept: "image/webp" }, redirect: "error", signal: AbortSignal.timeout(timeoutMs)
++    headers: { ...(token ? { "X-Sync-Token": token } : {}), ...(gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {}), ...(targetBase ? { "X-Target-URL": new URL(`/api/sync/bangumi/cover?file=${filename}`, targetBase).href } : {}), Accept: "image/webp" }, redirect: "error", signal: AbortSignal.timeout(timeoutMs)
+   });
+   if (!response.ok) throw new Error(`Peer cover HTTP ${response.status}`);
+   if (Number(response.headers.get("content-length")) > 20 * 1024 * 1024) throw new Error("Peer cover too large");

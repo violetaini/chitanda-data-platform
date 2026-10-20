@@ -20,6 +20,7 @@ function normalize(state){
  state.tunnels=state.tunnels.filter(t=>t.routeIds.every(id=>state.routes.some(r=>r.id===id)));
  for(const r of state.routes){if(state.tunnels.some(t=>t.routeIds.includes(r.id)))continue;state.tunnels.push({id:r.id,name:r.name,mode:'single',routeIds:[r.id],createdAt:r.createdAt});}
  for(const t of state.tunnels)if(t.mode==='single')t.name=state.routes.find(r=>r.id===t.routeIds[0])?.name||t.name;
+ if(state.httpAccess)for(const id of Object.keys(state.httpAccess))if(!state.tunnels.some(t=>t.id===id))delete state.httpAccess[id];
  tokens.ensure(state);
  return state.tunnels;
 }
@@ -29,6 +30,7 @@ module.exports=function({getState,validateRoute,ensureCertificates,audit}){
  function write(input,id){
   const s=getState(),old=id?get(id):null,mode=input.mode||old?.mode||'single',name=String(input.name||old?.name||'').trim();
   if(!['single','bidirectional'].includes(mode)||!name||name.length>60)fail('请选择隧道类型并填写 1–60 字符的名称');
+  if(old&&s.httpAccess?.[old.id]?.enabled&&mode!==old.mode)fail('请先停用 URL 请求接入再改变单双向类型',409);
   if(old&&bound(old)&&mode!==old.mode)fail('已绑定域名的隧道不能直接改变单双向类型',409);
   const count=mode==='bidirectional'?2:1;if(s.routes.length-(old?.routeIds.length||0)+count>128)fail('最多配置 128 条底层线路');
   const before=s.routes,previousRelays=s.relays,previousNodes=s.nodes,previousTunnels=structuredClone(normalize(s));s.relays=structuredClone(s.relays);s.nodes=structuredClone(s.nodes);
@@ -56,12 +58,14 @@ module.exports=function({getState,validateRoute,ensureCertificates,audit}){
   const s=getState(),t=get(id),bindings=(s.domains||[]).filter(b=>b.tunnelId===t.id||t.routeIds.some(id=>[b.mainlandRouteId,b.internationalRouteId].includes(id)));
   if(bindings.some(b=>b.status==='published'||b.publishedAt))fail('此通道绑定了已发布的业务域名，请先迁移域名后再删除',409);
   if(bindings.some(b=>b.lastError))fail('此通道的域名发布状态需要核验，请先处理域名发布错误后再删除',409);
+  if(s.httpAccess)delete s.httpAccess[t.id];
   s.routes=s.routes.filter(r=>!t.routeIds.includes(r.id));s.tunnels=s.tunnels.filter(v=>v.id!==id);
   if(s.domains)s.domains=s.domains.filter(b=>!bindings.includes(b));tokens.ensure(s);
   s.version++;audit('删除隧道',t.name+(bindings.length?' · 清理 '+bindings.length+' 个未发布域名草稿':''));
  }
  function merge(input){
   const s=getState(),a=get(input.firstTunnelId),b=get(input.secondTunnelId);
+  if(s.httpAccess?.[a.id]?.enabled||s.httpAccess?.[b.id]?.enabled)fail('请先停用 URL 请求接入再合并隧道',409);
   if(a.id===b.id||a.mode!=='single'||b.mode!=='single'||bound(a)||bound(b))fail('请选择两个未绑定域名的单向隧道',409);
   const x=s.routes.find(r=>r.id===a.routeIds[0]),y=s.routes.find(r=>r.id===b.routeIds[0]);
   if(x.source!==y.target||x.target!==y.source)fail('合并线路的两端节点须互为反向');

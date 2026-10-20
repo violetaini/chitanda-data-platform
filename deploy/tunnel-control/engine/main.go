@@ -28,20 +28,21 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.10.0"
+const version = "2.11.1"
 
 type Route struct {
-	RelayIDs   []string `json:"relayIds,omitempty"`
-	RelayID    string   `json:"relayId"`
-	Transport  string   `json:"transport"`
-	ServerName string   `json:"serverName"`
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Source     string   `json:"source"`
-	Target     string   `json:"target"`
-	ListenPort int      `json:"listenPort"`
-	TargetPort int      `json:"targetPort"`
-	Enabled    bool     `json:"enabled"`
+	HTTPAccess *HTTPRouteAccess `json:"httpAccess,omitempty"`
+	RelayIDs   []string         `json:"relayIds,omitempty"`
+	RelayID    string           `json:"relayId"`
+	Transport  string           `json:"transport"`
+	ServerName string           `json:"serverName"`
+	ID         string           `json:"id"`
+	Name       string           `json:"name"`
+	Source     string           `json:"source"`
+	Target     string           `json:"target"`
+	ListenPort int              `json:"listenPort"`
+	TargetPort int              `json:"targetPort"`
+	Enabled    bool             `json:"enabled"`
 }
 type Node struct {
 	ID    string `json:"id"`
@@ -97,6 +98,7 @@ type Hello struct {
 	Error      string `json:"error,omitempty"`
 }
 type Engine struct {
+	httpTransport    func(HTTPDestination) *http.Transport
 	endpointMu       sync.Mutex
 	endpointStop     chan struct{}
 	endpointStopping bool
@@ -200,7 +202,7 @@ func (e *Engine) report() map[string]any {
 			}
 		}
 	}
-	return map[string]any{"ports": ports, "listenerErrors": listenerErrors, "routeChecks": e.checkReports(), "capabilities": map[string]any{"routeProbe": 1, "relayChain": 1, "directEndpoint": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
+	return map[string]any{"ports": ports, "listenerErrors": listenerErrors, "routeChecks": e.checkReports(), "capabilities": map[string]any{"routeProbe": 1, "relayChain": 1, "headerURL": 1, "directEndpoint": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
 }
 func (e *Engine) syncConfig() error {
 	e.syncMu.Lock()
@@ -457,6 +459,13 @@ func (e *Engine) handleBroker(c net.Conn) {
 		}
 		e.connects.Add(1)
 		e.bridge(c, dest)
+		return
+	}
+	if route.Target == cfg.ID && route.HTTPAccess != nil {
+		if send(c, Hello{OK: true}) != nil || h.Kind == "probe" {
+			return
+		}
+		e.serveHeaderHTTP(c, route.ID)
 		return
 	}
 	// A relay may also be the endpoint. The service remains a fixed local port.

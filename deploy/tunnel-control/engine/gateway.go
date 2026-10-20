@@ -174,10 +174,14 @@ func newGatewayHandlerWithAccess(ep GatewayEndpoint, access func() []TunnelAcces
 		log.Printf("fixed upstream request failed: %v", err)
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
 	}, ErrorLog: log.New(io.Discard, "", 0)}
+	headerIngress := newHeaderIngress(target, access, accessPort)
 	slots := make(chan struct{}, 8)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if ep.ManagedAuth && headerIngress(w, r) {
+			return
+		}
 		legacyOK := subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+ep.Token)) == 1
 		authorized := legacyOK
 		if ep.ManagedAuth {
