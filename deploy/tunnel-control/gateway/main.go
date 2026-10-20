@@ -28,14 +28,18 @@ import (
 const maxBody = 16 << 20
 
 type Endpoint struct {
-	Sync           bool   `json:"sync,omitempty"`
-	Listen         string `json:"listen"`
-	Mode           string `json:"mode"`
-	Token          string `json:"token"`
-	Target         string `json:"target"`
-	ConnectAddress string `json:"connectAddress,omitempty"`
-	NextToken      string `json:"nextToken,omitempty"`
-	Node           string `json:"node,omitempty"`
+	ManagedAuth      bool   `json:"managedAuth,omitempty"`
+	AllowLegacyToken bool   `json:"allowLegacyToken,omitempty"`
+	TunnelAccessFile string `json:"tunnelAccessFile,omitempty"`
+	SyncToken        string `json:"syncToken,omitempty"`
+	Sync             bool   `json:"sync,omitempty"`
+	Listen           string `json:"listen"`
+	Mode             string `json:"mode"`
+	Token            string `json:"token"`
+	Target           string `json:"target"`
+	ConnectAddress   string `json:"connectAddress,omitempty"`
+	NextToken        string `json:"nextToken,omitempty"`
+	Node             string `json:"node,omitempty"`
 }
 type Configuration struct {
 	Endpoints []Endpoint `json:"endpoints"`
@@ -115,7 +119,24 @@ func fixedTarget(ep Endpoint) (*url.URL, error) {
 	}
 	return u, nil
 }
-func newHandler(ep Endpoint) (http.Handler, error) {
+func newHandler(ep Endpoint) (http.Handler, error) { return newHandlerWithAccess(ep, nil) }
+func newHandlerWithAccess(ep Endpoint, access func() []TunnelAccess) (http.Handler, error) {
+	if ep.TunnelAccessFile != "" {
+		ep.ManagedAuth = true
+		access = func() []TunnelAccess { return readTunnelAccess(ep.TunnelAccessFile) }
+	}
+	accessPort := 0
+	if ep.ManagedAuth {
+		u, err := url.Parse(ep.Target)
+		if err != nil || u.Scheme != "http" || net.ParseIP(u.Hostname()) == nil || !net.ParseIP(u.Hostname()).IsLoopback() {
+			return nil, errors.New("managed ingress requires a fixed loopback target")
+		}
+		accessPort, _ = strconv.Atoi(u.Port())
+		if accessPort < 1 {
+			return nil, errors.New("invalid managed ingress port")
+		}
+	}
+
 	if len(ep.Token) < 32 {
 		return nil, errors.New("endpoint token too short")
 	}
@@ -140,6 +161,12 @@ func newHandler(ep Endpoint) (http.Handler, error) {
 		for _, h := range []string{"Authorization", "Proxy-Authorization", "Cookie", "Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-IP", "X-Node-ID", "X-CSRF-Token"} {
 			pr.Out.Header.Del(h)
 		}
+		if ep.ManagedAuth {
+			pr.Out.Header.Del("X-Sync-Token")
+		}
+		if ep.SyncToken != "" {
+			pr.Out.Header.Set("X-Sync-Token", ep.SyncToken)
+		}
 		if ep.NextToken != "" {
 			pr.Out.Header.Set("Authorization", "Bearer "+ep.NextToken)
 		}
@@ -157,7 +184,18 @@ func newHandler(ep Endpoint) (http.Handler, error) {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+ep.Token)) != 1 {
+		legacyOK := subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+ep.Token)) == 1
+		authorized := legacyOK
+		if ep.ManagedAuth {
+			authorized = false
+			if access != nil {
+				authorized = tunnelAccessAllowed(r, access(), accessPort)
+			}
+			if ep.AllowLegacyToken && legacyOK {
+				authorized = true
+			}
+		}
+		if !authorized {
 			http.Error(w, "authentication required", 401)
 			return
 		}

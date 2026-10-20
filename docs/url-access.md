@@ -4,7 +4,7 @@
 
 ## 现在的 Chitanda 如何使用
 
-当前业务 URL 为 `https://data-test.chitanda.net`，调用方是国内和国际的 Chitanda 后台服务。国内请求进入国内节点，沿隧道到香港节点，再由固定源站适配器进入国际后台；反方向相反。国内和国际使用同一个 URL，各自填写本方向的入口凭据。
+当前业务 URL 为 `https://data-test.chitanda.net`，调用方是国内和国际的 Chitanda 后台服务。国内请求进入国内节点，沿隧道到香港节点，再由固定源站适配器进入国际后台；反方向相反。国内和国际使用同一个 URL，两端填写同一个隧道令牌。
 
 ```text
 业务后台 → HTTPS 业务域名:443 → 邻近节点的固定 HTTPS 入口
@@ -18,20 +18,18 @@ Chitanda 后台原环境配置使用：
 
 ```dotenv
 CHITANDA_SYNC_PEERS=https://data-test.chitanda.net
-CHITANDA_SYNC_TOKEN='保留现有业务同步令牌'
-CHITANDA_SYNC_GATEWAY_TOKEN='填写本方向的 HTTPS 入口凭据'
+CHITANDA_TUNNEL_TOKEN='填写隧道详情中的令牌'
 ```
 
-现有生产 Chitanda 已配置这些字段，不需重复填写。示例用于新业务部署，不要把占位符覆盖到生产。当前两端私有配置在 `/www/server/chitanda/www.chitanda.net/admin-server/admin.env`，由对应源站管理员维护。可在该服务器宝塔“文件”中打开此文件，搜索这两个变量查看现有值。教程现在直接说明这个位置；对于其他部署，以业务服务实际配置目录为准，中台没有保存或生成这些业务凭据。
+打开数据通道并展开对应隧道详情，即可查看、复制或重置隧道令牌。创建时自动生成，双向共用；重置后自动下发到相关入口节点，业务程序也需要更换新令牌。节点应用后旧令牌失效。
 
-`CHITANDA_SYNC_TOKEN` 用于最终业务接口；`CHITANDA_SYNC_GATEWAY_TOKEN` 用于入口外层 Bearer 鉴权。它们与数据中台登录密码、节点安装凭据和节点身份不同。凭据在业务服务器原有私有配置中维护，不在教程中回显。
+接入方只维护 URL 和 CHITANDA_TUNNEL_TOKEN。现有业务后台的内部同步密钥由固定源站适配器处理，保留服务端原配置；无需在业务接入示例再填两项旧凭据。完整说明见 [隧道令牌](tunnel-tokens.md)。
 
 在已授权的业务服务器加载同一套环境变量后，可先测试状态接口：
 
 ```bash
 curl --fail-with-body --connect-timeout 5 --max-time 30 \
-  -H "Authorization: Bearer ${CHITANDA_SYNC_GATEWAY_TOKEN}" \
-  -H "X-Sync-Token: ${CHITANDA_SYNC_TOKEN}" \
+  -H "Authorization: Bearer ${CHITANDA_TUNNEL_TOKEN}" \
   'https://data-test.chitanda.net/api/sync/status'
 ```
 
@@ -105,7 +103,7 @@ H2 / H3 / Stream 是节点间协议。外层业务为 HTTP 时仍可通过 HTTPS
 
 | 现象 | 检查项 |
 | --- | --- |
-| 401 | 外层 Bearer 和内层 X-Sync-Token 是否分别正确 |
+| 401 | 是否使用当前隧道令牌，入口是否已应用最新版本 |
 | 403 | 实际源站 IP、域名 Host、允许路径和方法 |
 | 502 / 超时 | 隧道、目标回环端口、固定源站、DNS 和证书 |
 | 测活成功但 API 失败 | 测活只检查通道和目标 TCP 端口，另查 HTTP 鉴权与响应 |

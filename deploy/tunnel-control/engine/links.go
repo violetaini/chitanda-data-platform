@@ -319,6 +319,8 @@ func (e *Engine) revoke() {
 	e.listeners = map[string]net.Listener{}
 	e.cfg.SelfRelay = nil
 	e.cfg.Nodes = nil
+	e.cfg.TunnelAccess = nil
+	_ = writeTunnelAccess(e.cfg.BusinessAccessFile, nil)
 	e.cfg.Routes = nil
 	e.cfg.Relays = nil
 	for c := range e.connections {

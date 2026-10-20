@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,7 +28,7 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.9.2"
+const version = "2.10.0"
 
 type Route struct {
 	RelayIDs   []string `json:"relayIds,omitempty"`
@@ -60,28 +61,30 @@ type Relay struct {
 	CA          string `json:"ca"`
 }
 type Config struct {
-	HTTPSIngress      *HTTPSIngressConfig `json:"httpsIngress,omitempty"`
-	HTTPSCertificate  *ManagedCertificate `json:"httpsCertificate,omitempty"`
-	Checks            []RouteCheckTask    `json:"checks,omitempty"`
-	DataGateway       *DataGatewayConfig  `json:"dataGateway,omitempty"`
-	CredentialVersion string              `json:"credentialVersion"`
-	CA                string              `json:"ca"`
-	Relays            []Relay             `json:"relays"`
-	SelfRelay         *Relay              `json:"selfRelay,omitempty"`
-	Controller        string              `json:"controller"`
-	ControllerAddress string              `json:"controllerAddress"`
-	ID                string              `json:"id"`
-	Token             string              `json:"token"`
-	Role              string              `json:"role"`
-	Revision          int                 `json:"revision"`
-	Listen            string              `json:"listen"`
-	Cert              string              `json:"cert"`
-	Key               string              `json:"key"`
-	PSK               string              `json:"psk"`
-	Path              string              `json:"path"`
-	Nodes             []Node              `json:"nodes"`
-	Routes            []Route             `json:"routes"`
-	Relay             Relay               `json:"relay"`
+	BusinessAccessFile string              `json:"businessAccessFile,omitempty"`
+	TunnelAccess       []TunnelAccess      `json:"tunnelAccess"`
+	HTTPSIngress       *HTTPSIngressConfig `json:"httpsIngress,omitempty"`
+	HTTPSCertificate   *ManagedCertificate `json:"httpsCertificate,omitempty"`
+	Checks             []RouteCheckTask    `json:"checks,omitempty"`
+	DataGateway        *DataGatewayConfig  `json:"dataGateway,omitempty"`
+	CredentialVersion  string              `json:"credentialVersion"`
+	CA                 string              `json:"ca"`
+	Relays             []Relay             `json:"relays"`
+	SelfRelay          *Relay              `json:"selfRelay,omitempty"`
+	Controller         string              `json:"controller"`
+	ControllerAddress  string              `json:"controllerAddress"`
+	ID                 string              `json:"id"`
+	Token              string              `json:"token"`
+	Role               string              `json:"role"`
+	Revision           int                 `json:"revision"`
+	Listen             string              `json:"listen"`
+	Cert               string              `json:"cert"`
+	Key                string              `json:"key"`
+	PSK                string              `json:"psk"`
+	Path               string              `json:"path"`
+	Nodes              []Node              `json:"nodes"`
+	Routes             []Route             `json:"routes"`
+	Relay              Relay               `json:"relay"`
 }
 type Hello struct {
 	Transport  string `json:"transport,omitempty"`
@@ -245,7 +248,11 @@ func (e *Engine) syncConfig() error {
 	if err := e.applyHTTPSCertificate(update.HTTPSCertificate); err != nil {
 		return fmt.Errorf("HTTPS certificate update failed: %w", err)
 	}
+	if err := writeTunnelAccess(cfg.BusinessAccessFile, update.TunnelAccess); err != nil {
+		return fmt.Errorf("business access update failed: %w", err)
+	}
 	e.mu.Lock()
+	e.cfg.TunnelAccess = update.TunnelAccess
 	e.cfg.HTTPSCertificate = update.HTTPSCertificate
 	e.cfg.CredentialVersion = update.CredentialVersion
 	e.cfg.CA = update.CA
@@ -265,7 +272,7 @@ func (e *Engine) syncConfig() error {
 		e.cfg.Relay = update.Relay
 	}
 	e.mu.Unlock()
-	if cfg.Revision != update.Revision || cfg.CredentialVersion != update.CredentialVersion {
+	if cfg.Revision != update.Revision || cfg.CredentialVersion != update.CredentialVersion || !slices.Equal(cfg.TunnelAccess, update.TunnelAccess) {
 		runtimeCfg, _ := json.Marshal(e.config())
 		if err := os.WriteFile("/var/lib/chitanda-transit/runtime.json.tmp", runtimeCfg, 0600); err == nil {
 			os.Rename("/var/lib/chitanda-transit/runtime.json.tmp", "/var/lib/chitanda-transit/runtime.json")
@@ -831,9 +838,9 @@ func main() {
 	if raw, err := os.ReadFile("/var/lib/chitanda-transit/runtime.json"); err == nil {
 		var cached Config
 		if json.Unmarshal(raw, &cached) == nil && compatibleCache(cfg, cached) {
-			gateway, ingress := cfg.DataGateway, cfg.HTTPSIngress
+			gateway, ingress, accessFile := cfg.DataGateway, cfg.HTTPSIngress, cfg.BusinessAccessFile
 			cfg = cached
-			cfg.DataGateway, cfg.HTTPSIngress = gateway, ingress
+			cfg.DataGateway, cfg.HTTPSIngress, cfg.BusinessAccessFile = gateway, ingress, accessFile
 		}
 	}
 	e := &Engine{cfg: cfg, started: time.Now(), pools: map[string]chan net.Conn{}, listeners: map[string]net.Listener{}, outbound: make(chan struct{}, 32), slots: make(chan struct{}, 96), links: map[string]*Link{}, connections: map[*slotConn]Hello{}}

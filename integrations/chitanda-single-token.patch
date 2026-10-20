@@ -1,0 +1,59 @@
+--- a/admin/server.js
++++ b/admin/server.js
+@@ -105,9 +105,10 @@
+   process.env.CHITANDA_CONTENT_SEED_PATH || path.join(__dirname, "content-seed.json")
+ );
+ const SYNC_TOKEN = process.env.CHITANDA_SYNC_TOKEN || "";
+-const SYNC_GATEWAY_TOKEN = process.env.CHITANDA_SYNC_GATEWAY_TOKEN || "";
++const TUNNEL_TOKEN = process.env.CHITANDA_TUNNEL_TOKEN || "";
++const SYNC_GATEWAY_TOKEN = TUNNEL_TOKEN || process.env.CHITANDA_SYNC_GATEWAY_TOKEN || "";
+ const syncAuthHeaders = () => ({
+-  "X-Sync-Token": SYNC_TOKEN,
++  ...(!TUNNEL_TOKEN ? { "X-Sync-Token": SYNC_TOKEN } : {}),
+   ...(SYNC_GATEWAY_TOKEN ? { Authorization: `Bearer ${SYNC_GATEWAY_TOKEN}` } : {})
+ });
+ const RAW_SYNC_PEERS = process.env.CHITANDA_SYNC_PEERS || process.env.CHITANDA_SYNC_PEER_URL || "";
+@@ -7098,7 +7099,7 @@
+   }
+ 
+   if (method === "GET" && pathname === "/api/admin/bangumi/cache") {
+-    const nodes = await collectBangumiCacheNodes({ readLocal: () => readLocalBangumiCache(db), peers: SYNC_PEERS, token: SYNC_TOKEN, gatewayToken: SYNC_GATEWAY_TOKEN });
++    const nodes = await collectBangumiCacheNodes({ readLocal: () => readLocalBangumiCache(db), peers: SYNC_PEERS, token: TUNNEL_TOKEN ? "" : SYNC_TOKEN, gatewayToken: SYNC_GATEWAY_TOKEN });
+     sendJson(response, 200, { ok: true, cache: nodes[0].cache, nodes });
+     return;
+   }
+@@ -7110,7 +7111,7 @@
+     if (!Number.isSafeInteger(index) || index < 0 || !SYNC_PEERS[index] || !/^[a-f0-9]{24}\.webp$/.test(filename)) {
+       sendError(response, 400, "节点或封面文件名不正确"); return;
+     }
+-    await sendBangumiCover(response, () => fetchBangumiPeerCover({ peer: SYNC_PEERS[index], token: SYNC_TOKEN, gatewayToken: SYNC_GATEWAY_TOKEN, filename }));
++    await sendBangumiCover(response, () => fetchBangumiPeerCover({ peer: SYNC_PEERS[index], token: TUNNEL_TOKEN ? "" : SYNC_TOKEN, gatewayToken: SYNC_GATEWAY_TOKEN, filename }));
+     return;
+   }
+ 
+--- a/admin/bangumi-cache-status.js
++++ b/admin/bangumi-cache-status.js
+@@ -113,9 +113,9 @@
+   const remote = peers.map(async (peer, index) => {
+     const node = { key: `peer-${index}`, local: false, nodeId: new URL(peer).hostname, cache: null, error: "" };
+     try {
+-      if (!token) throw new Error("同步连接未启用，无法查询另一节点。");
++      if (!token && !gatewayToken) throw new Error("同步连接未启用，无法查询另一节点。");
+       const response = await fetchImpl(`${peer}/api/sync/bangumi/cache`, {
+-        headers: { "X-Sync-Token": token, ...(gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {}), Accept: "application/json" },
++        headers: { ...(token ? { "X-Sync-Token": token } : {}), ...(gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {}), Accept: "application/json" },
+         redirect: "error", signal: AbortSignal.timeout(timeoutMs)
+       });
+       if (!response.ok) throw new Error(`另一节点查询失败（HTTP ${response.status}）。`);
+@@ -152,9 +152,9 @@
+ }
+ 
+ async function fetchBangumiPeerCover({ peer, token, gatewayToken = "", filename, fetchImpl = fetch, timeoutMs = 8000 }) {
+-  if (!token || !/^[a-f0-9]{24}\.webp$/.test(filename || "")) throw new Error("Invalid cover request");
++  if ((!token && !gatewayToken) || !/^[a-f0-9]{24}\.webp$/.test(filename || "")) throw new Error("Invalid cover request");
+   const response = await fetchImpl(`${peer}/api/sync/bangumi/cover?file=${filename}`, {
+-    headers: { "X-Sync-Token": token, ...(gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {}), Accept: "image/webp" }, redirect: "error", signal: AbortSignal.timeout(timeoutMs)
++    headers: { ...(token ? { "X-Sync-Token": token } : {}), ...(gatewayToken ? { Authorization: `Bearer ${gatewayToken}` } : {}), Accept: "image/webp" }, redirect: "error", signal: AbortSignal.timeout(timeoutMs)
+   });
+   if (!response.ok) throw new Error(`Peer cover HTTP ${response.status}`);
+   if (Number(response.headers.get("content-length")) > 20 * 1024 * 1024) throw new Error("Peer cover too large");

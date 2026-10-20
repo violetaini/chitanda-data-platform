@@ -1,5 +1,5 @@
 'use strict';
-const crypto=require('node:crypto');
+const crypto=require('node:crypto'),tokens=require('./tunnel-tokens.cjs');
 const fail=(message,status=400)=>{throw Object.assign(Error(message),{status});};
 // Tunnels are control-plane objects; route IDs and node wire configuration stay intact.
 function normalize(state){
@@ -20,6 +20,7 @@ function normalize(state){
  state.tunnels=state.tunnels.filter(t=>t.routeIds.every(id=>state.routes.some(r=>r.id===id)));
  for(const r of state.routes){if(state.tunnels.some(t=>t.routeIds.includes(r.id)))continue;state.tunnels.push({id:r.id,name:r.name,mode:'single',routeIds:[r.id],createdAt:r.createdAt});}
  for(const t of state.tunnels)if(t.mode==='single')t.name=state.routes.find(r=>r.id===t.routeIds[0])?.name||t.name;
+ tokens.ensure(state);
  return state.tunnels;
 }
 module.exports=function({getState,validateRoute,ensureCertificates,audit}){
@@ -47,7 +48,7 @@ module.exports=function({getState,validateRoute,ensureCertificates,audit}){
    s.routes=s.routes.map(r=>r.id===a.id?{...r,createdAt:first?.createdAt||r.createdAt}:r);
    ensureCertificates();
    const t={id:old?.id||'tunnel-'+crypto.randomBytes(8).toString('hex'),name,mode,routeIds:ids,createdAt:old?.createdAt||new Date().toISOString()};
-   s.tunnels=previousTunnels.map(v=>v.id===old?.id?t:v);if(!old)s.tunnels.push(t);
+   s.tunnels=previousTunnels.map(v=>v.id===old?.id?t:v);if(!old)s.tunnels.push(t);tokens.ensure(s);
    s.version++;audit(old?'更新隧道':'创建隧道',name+' · '+(count===2?'双向':'单向'));return t;
   }catch(e){s.routes=before;s.relays=previousRelays;if(previousNodes===undefined)delete s.nodes;else s.nodes=previousNodes;s.tunnels=previousTunnels;throw e;}
  }
@@ -56,7 +57,7 @@ module.exports=function({getState,validateRoute,ensureCertificates,audit}){
   if(bindings.some(b=>b.status==='published'||b.publishedAt))fail('此通道绑定了已发布的业务域名，请先迁移域名后再删除',409);
   if(bindings.some(b=>b.lastError))fail('此通道的域名发布状态需要核验，请先处理域名发布错误后再删除',409);
   s.routes=s.routes.filter(r=>!t.routeIds.includes(r.id));s.tunnels=s.tunnels.filter(v=>v.id!==id);
-  if(s.domains)s.domains=s.domains.filter(b=>!bindings.includes(b));
+  if(s.domains)s.domains=s.domains.filter(b=>!bindings.includes(b));tokens.ensure(s);
   s.version++;audit('删除隧道',t.name+(bindings.length?' · 清理 '+bindings.length+' 个未发布域名草稿':''));
  }
  function merge(input){
@@ -65,7 +66,7 @@ module.exports=function({getState,validateRoute,ensureCertificates,audit}){
   const x=s.routes.find(r=>r.id===a.routeIds[0]),y=s.routes.find(r=>r.id===b.routeIds[0]);
   if(x.source!==y.target||x.target!==y.source)fail('合并线路的两端节点须互为反向');
   const name=String(input.name||a.name).trim();if(!name||name.length>60)fail('隧道名称应为 1–60 字符');
-  const t={id:a.id,name,mode:'bidirectional',routeIds:[x.id,y.id],createdAt:a.createdAt};s.tunnels=s.tunnels.filter(v=>![a.id,b.id].includes(v.id));s.tunnels.push(t);audit('合并双向隧道',name);return t;
+  const t={id:a.id,name,mode:'bidirectional',routeIds:[x.id,y.id],createdAt:a.createdAt};s.tunnels=s.tunnels.filter(v=>![a.id,b.id].includes(v.id));s.tunnels.push(t);tokens.ensure(s);s.version++;audit('合并双向隧道',name);return t;
  }
  return {get,write,remove,merge};
 };
