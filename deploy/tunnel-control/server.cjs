@@ -7,7 +7,7 @@ fs.mkdirSync(DATA,{recursive:true,mode:0o700});
 const account=require('./account.cjs')(DATA);
 const defense=require('./login-defense.cjs')(DATA);
 const stateFile=path.join(DATA,'state.json'),secret=()=>crypto.randomBytes(32).toString('hex'),newId=p=>p+'-'+crypto.randomBytes(6).toString('hex');
-let state=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):{version:1,relays:[{id:'relay-hk',name:'香港优化节点',host:'47.243.148.109',port:443,serverName:DEFAULT_SNI,path:'/api/v1/chitanda-bridge',psk:crypto.randomBytes(32).toString('base64'),token:secret()}],nodes:[{id:'mainland',name:'中国大陆',host:'110.42.32.161',role:'国内接入',token:secret()},{id:'international',name:'国际业务节点',host:'23.145.248.44',role:'国际接入',token:secret()}],routes:[],events:[]};
+let state=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):{version:1,relays:[{id:'relay-hk',name:'香港优化机',host:'47.243.148.109',port:443,serverName:DEFAULT_SNI,path:'/api/v1/chitanda-bridge',psk:crypto.randomBytes(32).toString('base64'),token:secret()}],nodes:[{id:'mainland',name:'中国大陆',host:'110.42.32.161',role:'国内接入',token:secret()},{id:'international',name:'国际业务节点',host:'23.145.248.44',role:'国际接入',token:secret()}],routes:[],events:[]};
 const reports=new Map(),history=new Map(),sessions=new Map();
 const systemSettings=require('./settings.cjs');state.settings=systemSettings.read(state.settings);
 let deferSave=false;
@@ -49,7 +49,7 @@ setInterval(()=>{dnsAddressSync.tick().catch(()=>console.error('DNS address main
 const tunnelManager=tunnelModel({getState:()=>state,validateRoute,ensureCertificates:()=>{for(const r of state.relays)ensureCertificate(r);},audit});
 setInterval(()=>{try{routeChecks.tick();}catch{console.error('route check scheduling failed');}},5000).unref();
 const linkKey=r=>[r.relayId,r.transport,r.serverName].join('|');
-function cleanNode(n,relay=false){return {id:n.id,name:n.name,host:n.host||'',role:relay?'优化节点':n.role,kind:relay?'relay':'agent',installed:n.installation?.status==='installed',installation:n.installation||null,ingress:n.ingress||null,...(relay?{port:n.port,serverName:n.serverName,tlsVerify:true,certExpires:n.certExpires,certNames:n.certNames,protocols:report(n.id).capabilities?.transports||[]}:{}),...report(n.id)};}
+function cleanNode(n,relay=false){const role=relay?'优化机':n.role?.includes('国内')?'国内隧道':n.role?.includes('国际')?'国际隧道入口':n.role||'隧道入口',entryRoles=relay?[...new Set((state.origins||[]).filter(o=>o.endpoint===n.id).flatMap(o=>o.region==='mainland'||o.role?.includes('国内')?['国内隧道']:o.region==='international'||o.role?.includes('国际')?['国际隧道入口']:[]))]:[];return {id:n.id,name:n.name,host:n.host||'',role,entryRoles,kind:relay?'relay':'agent',installed:n.installation?.status==='installed',installation:n.installation||null,ingress:n.ingress||null,...(relay?{port:n.port,serverName:n.serverName,tlsVerify:true,certExpires:n.certExpires,certNames:n.certNames,protocols:report(n.id).capabilities?.transports||[]}:{}),...report(n.id)};}
 function snapshot(){
  const relays=state.relays.map(n=>cleanNode(n,true)),nodes=state.nodes.map(n=>cleanNode(n));
  const routes=state.routes.map(r=>{const s=report(r.source),t=report(r.target),mid=report(r.relayId),key=linkKey(r),sl=s.links?.[key],tl=t.links?.[key],current=n=>Number(n.revision)>=state.version;return {...r,test:routeChecks.get(r.id),configPending:[s,t,mid].some(n=>n.online&&!current(n)),sourceOnline:!!(s.online&&current(s)&&s.listeners?.includes(r.id)&&(r.source===r.relayId||sl?.connected)),targetOnline:!!(t.online&&current(t)&&(r.target===r.relayId||tl?.connected)),relayOnline:!!(mid.online&&current(mid))};});
@@ -66,7 +66,7 @@ function baseAgentConfig(id){
 function agentConfig(id){const https=state.certificates?.https,node=[...state.nodes,...state.relays].find(n=>n.id===id);return {...baseAgentConfig(id),httpsCertificate:https?.mode==='custom'&&https.nodeIds.includes(id)&&node.ingress&&new crypto.X509Certificate(https.certPEM).checkHost(node.ingress.domain)?{certPEM:https.certPEM,keyPEM:https.keyPEM}:null,checks:routeChecks.pending(id)};}
 function validateRoute(input,id){
  const endpoints=[...state.nodes,...state.relays],source=endpoints.find(n=>n.id===input.source),target=endpoints.find(n=>n.id===input.target),relay=state.relays.find(n=>n.id===(input.relayId||state.relays[0]?.id));
- if(!source||!target||source.id===target.id)fail('请选择不同的源节点和目标节点');if(!relay)fail('请选择优化节点');if([source,target].some(n=>state.relays.includes(n)&&n.id!==relay.id))fail('作为端点的优化节点必须与所选优化节点一致');
+ if(!source||!target||source.id===target.id)fail('请选择不同的源节点和目标节点');if(!relay)fail('请选择优化机');if([source,target].some(n=>state.relays.includes(n)&&n.id!==relay.id))fail('作为端点的优化机必须与所选优化机一致');
  const listenPort=Number(input.listenPort),targetPort=Number(input.targetPort);if(!Number.isInteger(listenPort)||listenPort<1024||listenPort>65535||!Number.isInteger(targetPort)||targetPort<1||targetPort>65535)fail('监听端口应为 1024–65535，目标端口应为 1–65535');
  if(targetPort===5092)fail('控制台管理端口不可作为数据通道目标');
  if(state.routes.some(r=>r.id!==id&&r.source===source.id&&r.listenPort===listenPort))fail('源节点上的监听端口已被使用',409);
@@ -186,10 +186,10 @@ const server=http.createServer(async(req,res)=>{try{
   const routeMatch=p.match(/^\/tunnel\/api\/routes\/([a-zA-Z0-9-]+)$/);
   if(routeMatch){const i=state.routes.findIndex(r=>r.id===routeMatch[1]);if(i<0)fail('数据通道不存在',404);if(['PATCH','DELETE'].includes(req.method)&&state.tunnels?.some(t=>t.mode==='bidirectional'&&t.routeIds.includes(routeMatch[1])))fail('请在双向隧道中统一修改两个方向',409);if(req.method==='PATCH'){const r=mutateRoute({...state.routes[i],...await body(req)},state.routes[i].id);state.version++;audit('更新数据通道',r.name+' · '+r.transport.toUpperCase()+' · '+(r.enabled?'启用':'暂停'));return json(res,200,{ok:true});}if(req.method==='DELETE'){if(state.domains?.some(b=>[b.mainlandRouteId,b.internationalRouteId].includes(routeMatch[1])))fail('请先处理绑定此线路的业务域名',409);const [r]=state.routes.splice(i,1);state.version++;audit('删除数据通道',r.name);return json(res,200,{ok:true});}}
   if(p===BASE+'/api/nodes'&&req.method==='POST'){
-   const b=await body(req),isRelay=b.kind==='relay';if(state.nodes.length+state.relays.length>=64)fail('最多登记 64 个节点');const name=String(b.name||'').trim();if(!name||name.length>60)fail('请填写 1–60 字符的节点名称');
-   const n={id:newId(isRelay?'relay':'node'),name,host:'',role:b.region==='mainland'?'国内接入':'国际接入',token:secret()};
+   const b=await body(req);if(b.purpose!==undefined&&!['international','relay','mainland'].includes(b.purpose))fail('请选择国际隧道入口、优化机或国内隧道');const isRelay=b.purpose!==undefined?b.purpose==='relay':b.kind==='relay',mainland=b.purpose!==undefined?b.purpose==='mainland':b.region==='mainland';if(state.nodes.length+state.relays.length>=64)fail('最多登记 64 个节点');const name=String(b.name||'').trim();if(!name||name.length>60)fail('请填写 1–60 字符的节点名称');
+   const n={id:newId(isRelay?'relay':'node'),name,host:'',role:isRelay?'优化机':mainland?'国内隧道':'国际隧道入口',token:secret()};
    if(isRelay){const port=Number(b.port||443);if(!Number.isInteger(port)||(port<1024&&port!==443)||port>65535)fail('中转端口应为 443 或 1024–65535');Object.assign(n,{port,serverName:domain(b.serverName),path:'/api/v1/chitanda-bridge',psk:crypto.randomBytes(32).toString('base64')});ensureCertificate(n);state.relays.push(n);}else state.nodes.push(n);
-   state.version++;audit('添加节点',name+' · '+(isRelay?'优化节点':'业务接入'));return json(res,201,{ok:true,node:cleanNode(n,isRelay)});
+   state.version++;audit('添加节点',name+' · '+n.role);return json(res,201,{ok:true,node:cleanNode(n,isRelay)});
   }
   const nodeMatch=p.match(/^\/tunnel\/api\/nodes\/([a-zA-Z0-9-]+)$/);
   if(nodeMatch){const id=nodeMatch[1],relay=state.relays.find(n=>n.id===id),n=relay||state.nodes.find(n=>n.id===id);if(!n)fail('节点不存在',404);
