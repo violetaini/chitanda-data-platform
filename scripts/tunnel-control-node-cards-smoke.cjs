@@ -29,6 +29,10 @@ const {createAdminPasswordHash}=require('../deploy/tunnel-control/password-auth.
     other.tls={schema:1,collectedAt:observedAt,entries:[{...relay.tls.entries[0],relayId:other.id,certificate:{...certificate,dnsNames:['alternate.chitanda.net'],notAfter:'2028-03-01T12:00:00Z'}}]};
     node.tls.entries.push({...node.tls.entries[0],relayId:other.id,transport:'h3',serverName:'alternate.chitanda.net',alpn:'h3',certificate:{...certificate,fingerprint:'b'.repeat(64),notAfter:'2028-03-01T12:00:00Z'}});
    }
+   if(mode==='layout'){
+    state.relays.push({...relay,id:'relay-long',name:'国际入口 / 第二段优化机 · 154.12.176.212',host:'154.12.176.212'});
+    state.nodes.push({...node,id:'international-long',name:'国际入口 · 170.59.59.149',host:'170.59.59.149'});
+   }
    await route.fulfill({response,json:state});
   });
   await page.goto(base+'/tunnel/');await page.locator('[name=username]').fill('node-cards-admin');await page.locator('[name=password]').fill(password);await page.locator('.login-submit').click();await page.locator('#shell').waitFor({state:'visible'});await page.locator('nav [data-view=nodes]').click();
@@ -46,6 +50,18 @@ const {createAdminPasswordHash}=require('../deploy/tunnel-control/password-auth.
    if(width>=1024){const a=await agent.locator('.node-card-footer').boundingBox(),b=await relay.locator('.node-card-footer').boundingBox();check(Math.abs(a.y-b.y)<1,'card actions align');}
    const output=path.resolve('tmp/node-cards-qa');fs.mkdirSync(output,{recursive:true});await page.screenshot({path:path.join(output,`nodes-${width}.png`),fullPage:true});
   }
+  mode='layout';
+  for(const width of [1920,1440,1024,390]){
+   await page.setViewportSize({width,height:1100});await page.evaluate(()=>refresh());
+   const cards=await page.locator('[data-node-card]').evaluateAll(xs=>xs.map(x=>({top:x.getBoundingClientRect().top,metrics:x.querySelector('.node-metrics').getBoundingClientRect().top,ip:getComputedStyle(x.querySelector('.host')).fontSize})));
+   check(cards.length===4&&cards.every(x=>x.ip==='15px'),'all node addresses use one font size at '+width);
+   check(cards.every(x=>cards.filter(y=>Math.abs(y.top-x.top)<1).every(y=>Math.abs(x.metrics-y.metrics)<1)),'metric rows align for short and wrapped names at '+width);
+   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'long names fit '+width);
+   await page.screenshot({path:path.resolve('tmp/node-cards-qa',`aligned-${width}.png`),fullPage:true});
+  }
+  check(await page.locator('[data-node-card=relay-long] h2').innerText()==='国际入口 / 第二段优化机','duplicate IP is only shown in the address row');
+  check((await page.locator('[data-node-card=relay-long] h2').getAttribute('title')).endsWith('154.12.176.212'),'original custom name remains available');
+  check(await page.evaluate(()=>nodeCardName({name:'节点 123',host:'23'}))==='节点 123','address suffix is not stripped from unrelated names');
   mode='unreported';await page.evaluate(()=>refresh());check(await agent.locator('[data-node-field=ingress]').count()===0,'no node-level entry placeholder');
   mode='multiple';await page.evaluate(()=>refresh());check(await page.locator('[data-node-card]').count()===3,'arbitrary added nodes automatically render');check(await page.locator('[data-node-card=relay-second] .node-kind').innerText()==='优化机','unrelated optimizer does not inherit another origin duty');
   check((await agent.locator('[data-node-field=certificate]').innerText()).includes('有效'),'node card shows brief certificate validity');mode='rotated';await page.evaluate(()=>refresh());check((await agent.locator('[data-node-field=certificate]').innerText()).includes('2030'),'node expiry follows observed rotation');mode='offline';await page.evaluate(()=>refresh());check((await agent.locator('[data-node-field=certificate]').innerText()).includes('离线'),'offline certificate status is explicit');await page.locator('nav [data-view=settings]').click();check(await page.locator('.certificate-observations').count()===0,'per-node observations are removed from settings');
