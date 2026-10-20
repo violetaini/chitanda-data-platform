@@ -9,7 +9,7 @@ module.exports=function sanitizeTLS(value,node,state){
   if(!raw||typeof raw!=='object'||!['client','server'].includes(raw.side)||!['channel','https-ingress'].includes(raw.usage))continue;
   if(raw.side==='server'&&raw.usage==='channel'&&!state.relays.some(n=>n.id===node.id))continue;
   if(raw.side==='server'&&raw.usage==='https-ingress'&&!node.ingress)continue;
-  if(raw.side==='client'&&(raw.usage!=='channel'||!state.routes.some(r=>r.enabled&&(r.source===node.id||r.target===node.id)&&r.relayId===raw.relayId&&r.transport===raw.transport&&r.serverName===raw.serverName)))continue;
+  if(raw.side==='client'&&(raw.usage!=='channel'||!state.routes.some(r=>r.enabled&&require('./route-path.cjs').link(r,node.id)===raw.relayId&&r.transport===raw.transport&&r.serverName===raw.serverName)))continue;
   let certificate=null;const c=raw.certificate;
   if(c&&/^[a-f0-9]{64}$/i.test(c.fingerprint)&&date(c.notBefore)&&date(c.notAfter)&&Date.parse(c.notAfter)>Date.parse(c.notBefore))certificate={fingerprint:c.fingerprint.toLowerCase(),subject:text(c.subject,384),issuer:text(c.issuer,384),dnsNames:Array.isArray(c.dnsNames)?c.dnsNames.filter(n=>typeof n==='string'&&n.length<=253).slice(0,24):[],notBefore:date(c.notBefore),notAfter:date(c.notAfter)};
   const observedAt=date(raw.observedAt);

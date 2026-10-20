@@ -32,7 +32,8 @@ func (e *Engine) reconcileLinks() {
 	cfg := e.config()
 	desired := map[string]Route{}
 	for _, r := range cfg.Routes {
-		if r.Enabled && (r.Source == cfg.ID || r.Target == cfg.ID) {
+		if relay := r.linkRelay(cfg.ID); r.Enabled && relay != "" {
+			r.RelayID = relay
 			desired[routeKey(r)] = r
 		}
 	}
@@ -148,7 +149,7 @@ func (e *Engine) acceptOnLink(l *Link) {
 			cfg := e.config()
 			var route *Route
 			for _, r := range cfg.Routes {
-				if r.ID == h.Route && r.Target == cfg.ID && r.Enabled && r.RelayID == l.relay.ID && r.Transport == l.transport && r.ServerName == l.serverName {
+				if r.ID == h.Route && r.Target == cfg.ID && r.Enabled && r.lastRelay() == l.relay.ID && r.Transport == l.transport && r.ServerName == l.serverName {
 					copy := r
 					route = &copy
 					break
@@ -210,6 +211,10 @@ func (e *Engine) pingLink(l *Link) {
 			l.lastError = err.Error()
 		}
 		l.mu.Unlock()
+		if err != nil {
+			e.retireFailedLink(l)
+			return
+		}
 		if !linkDelay(l, 15*time.Second) {
 			return
 		}
@@ -220,6 +225,7 @@ func (e *Engine) routeClient(id string) (*client.Client, Hello, error) {
 	defer e.mu.RUnlock()
 	for _, r := range e.cfg.Routes {
 		if r.ID == id && r.Enabled && r.Source == e.cfg.ID {
+			r.RelayID = r.firstRelay()
 			l := e.links[routeKey(r)]
 			if l == nil {
 				return nil, Hello{}, errors.New("configured relay link is not available")
@@ -260,7 +266,7 @@ func (e *Engine) openRouteContext(ctx context.Context, id, kind string) (net.Con
 		return nil, errors.New("local broker credential missing")
 	}
 	for _, r := range cfg.Routes {
-		if r.ID != id || !r.Enabled || r.Source != cfg.ID || r.RelayID != cfg.ID {
+		if r.ID != id || !r.Enabled || r.Source != cfg.ID || r.firstRelay() != cfg.ID {
 			continue
 		}
 		c, err := (&net.Dialer{}).DialContext(ctx, "tcp", e.brokerAddress)
@@ -336,7 +342,7 @@ func (e *Engine) pruneRevoked() {
 		}
 		if h.Route != "" {
 			r, ok := routes[h.Route]
-			if !ok || r.Transport != h.Transport || r.ServerName != h.ServerName {
+			if !ok || r.Transport != h.Transport || r.ServerName != h.ServerName || (h.Kind != "accept" && r.brokerSource(e.cfg.ID) != h.Node) {
 				c.Close()
 			}
 		}
@@ -355,5 +361,24 @@ func (e *Engine) pruneRevoked() {
 				(<-p).Close()
 			}
 		}
+	}
+}
+
+// A dead carrier can retain a stale multiplexed session after its server restarts.
+// Retire only this exact link; the next normal configuration sync recreates it.
+func (e *Engine) retireFailedLink(l *Link) {
+	key := l.relay.ID + "|" + l.transport + "|" + l.serverName
+	e.mu.Lock()
+	if e.links[key] != l {
+		e.mu.Unlock()
+		return
+	}
+	delete(e.links, key)
+	e.mu.Unlock()
+	if l.cancel != nil {
+		l.cancel()
+	}
+	if l.client != nil {
+		l.client.Close()
 	}
 }

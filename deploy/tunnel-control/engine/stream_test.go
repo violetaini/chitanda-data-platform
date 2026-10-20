@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"fmt"
 	"github.com/violetaini/chitanda/pkg/auth"
 	"github.com/violetaini/chitanda/pkg/client"
@@ -87,4 +88,6 @@ func TestNativeStreamIntegrityHalfCloseAuthenticationAndProbes(t *testing.T) {
 	broker.cfg.Routes[0].Target = "international"
 	broker.mu.Unlock()
 	exerciseRealRouteChecks(t, broker, cli, ln.Addr().String(), psk, "stream", "")
+	exerciseRealRelayChain(t, "stream", tls.Certificate{})
+	exerciseRealRelayChain(t, "stream", tls.Certificate{}, true)
 }

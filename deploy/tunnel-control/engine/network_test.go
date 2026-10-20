@@ -258,4 +258,10 @@ func TestRealH2H3AndSNICertificate(t *testing.T) {
 	if rejectedObservations.Load() != 0 {
 		t.Fatal("rejected SNI generated a successful TLS observation")
 	}
+	for _, protocol := range []string{"h2", "h3"} {
+		t.Run("multi-relay/"+protocol, func(t *testing.T) {
+			exerciseRealRelayChain(t, protocol, certificate)
+			exerciseRealRelayChain(t, protocol, certificate, true)
+		})
+	}
 }

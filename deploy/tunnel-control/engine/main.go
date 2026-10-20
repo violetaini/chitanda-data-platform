@@ -27,19 +27,20 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.7.2"
+const version = "2.8.1"
 
 type Route struct {
-	RelayID    string `json:"relayId"`
-	Transport  string `json:"transport"`
-	ServerName string `json:"serverName"`
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Source     string `json:"source"`
-	Target     string `json:"target"`
-	ListenPort int    `json:"listenPort"`
-	TargetPort int    `json:"targetPort"`
-	Enabled    bool   `json:"enabled"`
+	RelayIDs   []string `json:"relayIds,omitempty"`
+	RelayID    string   `json:"relayId"`
+	Transport  string   `json:"transport"`
+	ServerName string   `json:"serverName"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Source     string   `json:"source"`
+	Target     string   `json:"target"`
+	ListenPort int      `json:"listenPort"`
+	TargetPort int      `json:"targetPort"`
+	Enabled    bool     `json:"enabled"`
 }
 type Node struct {
 	ID    string `json:"id"`
@@ -186,7 +187,7 @@ func (e *Engine) report() map[string]any {
 			}
 		}
 	}
-	return map[string]any{"routeChecks": e.checkReports(), "capabilities": map[string]any{"routeProbe": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
+	return map[string]any{"routeChecks": e.checkReports(), "capabilities": map[string]any{"routeProbe": 1, "relayChain": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
 }
 func (e *Engine) syncConfig() error {
 	e.syncMu.Lock()
@@ -265,6 +266,7 @@ func (e *Engine) syncConfig() error {
 		e.reconcileListeners()
 	} else {
 		e.pruneRevoked()
+		e.reconcileLinks()
 		e.reconcileListeners()
 	}
 	e.startChecks(update.Checks)
@@ -275,6 +277,9 @@ func (e *Engine) controlLoop() {
 		err := e.syncConfig()
 		if err != nil {
 			log.Printf("control: %v", err)
+			// Keep existing data paths recoverable even while control is unreachable.
+			e.reconcileLinks()
+			e.reconcileListeners()
 		}
 		time.Sleep(15 * time.Second)
 	}
@@ -391,7 +396,7 @@ func (e *Engine) handleBroker(c net.Conn) {
 	var route *Route
 	cfg := e.config()
 	for _, r := range cfg.Routes {
-		if r.ID == h.Route && r.Enabled && r.Source == h.Node && r.Transport == h.Transport && r.ServerName == h.ServerName {
+		if r.ID == h.Route && r.Enabled && r.brokerSource(cfg.ID) == h.Node && r.Transport == h.Transport && r.ServerName == h.ServerName {
 			copy := r
 			route = &copy
 			break
@@ -399,6 +404,39 @@ func (e *Engine) handleBroker(c net.Conn) {
 	}
 	if route == nil {
 		send(c, Hello{Error: "route not permitted"})
+		return
+	}
+	// Only the configured next relay is addressable; clients cannot supply a host or hop.
+	if next := route.nextRelay(cfg.ID); next != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		cli, hello, dialErr := e.forwardClient(*route, next, h.Kind)
+		if dialErr != nil {
+			send(c, Hello{Error: "channel unavailable"})
+			return
+		}
+		dest, dialErr := e.dialContext(ctx, cli, hello)
+		if dialErr != nil {
+			send(c, Hello{Error: "channel unavailable"})
+			return
+		}
+		defer dest.Close()
+		dest.SetReadDeadline(time.Now().Add(12 * time.Second))
+		ack, readErr := receive(dest)
+		dest.SetReadDeadline(time.Time{})
+		if readErr != nil {
+			send(c, Hello{Error: "channel unavailable"})
+			return
+		}
+		if !ack.OK {
+			send(c, Hello{Error: ack.Error})
+			return
+		}
+		if send(c, Hello{OK: true}) != nil || h.Kind == "probe" {
+			return
+		}
+		e.connects.Add(1)
+		e.bridge(c, dest)
 		return
 	}
 	// A relay may also be the endpoint. The service remains a fixed local port.
@@ -607,6 +645,7 @@ func (e *Engine) runRelay() error {
 	go func() { errCh <- stream.Serve(streamListener) }()
 	go func() { errCh <- h3.ListenAndServe() }()
 	go func() { errCh <- srv.ListenAndServeTLS("", "") }()
+	e.reconcileLinks()
 	e.reconcileListeners()
 	log.Printf("relay listening %s (H2 TCP + H3 UDP / TLS 1.3)", cfg.Listen)
 	err = <-errCh
