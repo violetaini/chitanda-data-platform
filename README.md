@@ -87,7 +87,7 @@ npm run build:node-release
 
 节点与证书、Stream 的部署和维护说明见 [统一证书与原生 Stream](docs/certificates-stream.md)。
 
-SSL 证书支持中台自动申请续签、DNS 面板续签同步、自行上传维护三种来源。新证书统一自动下发，显示节点实际应用状态；配置与权限说明见 [证书来源](docs/certificate-sources.md)。
+SSL 证书先添加根域名，再从自动申请、DNS 面板同步、自行上传三种来源中选一种；仅接受泛域名证书，已有配置通过“切换模式”替换。系统设置显示根域名证书有效性，节点管理简要显示实际证书状况并维护节点授权。新证书统一自动下发，见 [证书来源](docs/certificate-sources.md)。
 
 ## 域名接入与 DNS
 
