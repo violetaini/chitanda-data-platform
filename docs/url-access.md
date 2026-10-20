@@ -22,7 +22,7 @@ CHITANDA_SYNC_TOKEN='保留现有业务同步令牌'
 CHITANDA_SYNC_GATEWAY_TOKEN='填写本方向的 HTTPS 入口凭据'
 ```
 
-现有生产 Chitanda 已配置这些字段，不需重复填写。示例用于新业务部署，不要把占位符覆盖到生产。当前两端私有配置在 `/www/server/chitanda/www.chitanda.net/admin-server/admin.env`，由对应源站管理员维护，中台教程不会回显这些值。
+现有生产 Chitanda 已配置这些字段，不需重复填写。示例用于新业务部署，不要把占位符覆盖到生产。当前两端私有配置在 `/www/server/chitanda/www.chitanda.net/admin-server/admin.env`，由对应源站管理员维护。可在该服务器宝塔“文件”中打开此文件，搜索这两个变量查看现有值。教程现在直接说明这个位置；对于其他部署，以业务服务实际配置目录为准，中台没有保存或生成这些业务凭据。
 
 `CHITANDA_SYNC_TOKEN` 用于最终业务接口；`CHITANDA_SYNC_GATEWAY_TOKEN` 用于入口外层 Bearer 鉴权。它们与数据中台登录密码、节点安装凭据和节点身份不同。凭据在业务服务器原有私有配置中维护，不在教程中回显。
 
