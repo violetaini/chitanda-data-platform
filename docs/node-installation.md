@@ -1,6 +1,6 @@
 # 节点安装、更新和卸载
 
-新增节点后自动弹出安装指令；关闭后可随时从节点卡片重新打开。窗口只保留 GitHub / 源站两个来源、一条当前指令和复制按钮。首次鉴权心跳确认安装后，在线节点默认显示卸载指令，并可切换“重新安装”；离线节点优先显示恢复安装指令，也可查看卸载指令。历史状态仍持久保存，不根据离线推断是否卸载。卸载器成功通知中台后恢复安装指令；网络不可达时保留最近确认状态。支持多种 Linux 发行版、8 种架构和 systemd / OpenRC / runit / SysV，具体边界及实测版本见 [Linux 支持范围](linux-support.md)。节点不需要安装整个面板、数据库、容器或编译工具。
+新增节点后自动弹出安装指令；关闭后可随时从节点卡片重新打开。窗口保留 GitHub / 源站两个来源，默认展示短指令和复制按钮；缺少 curl 时可展开兼容指令。首次鉴权心跳确认安装后，在线节点默认显示卸载指令，并可切换“重新安装”；离线节点优先显示恢复安装指令，也可查看卸载指令。历史状态仍持久保存，不根据离线推断是否卸载。卸载器成功通知中台后恢复安装指令；网络不可达时保留最近确认状态。支持多种 Linux 发行版、8 种架构和 systemd / OpenRC / runit / SysV，具体边界及实测版本见 [Linux 支持范围](linux-support.md)。节点不需要安装整个面板、数据库、容器或编译工具。
 
 ## 安装
 
@@ -9,9 +9,9 @@
 3. 安装器自动识别架构，从同一个 HTTPS 控制端领取配置和下载安装包，校验大小、SHA-256 与程序版本，建立低权限系统服务并启动。
 4. 返回面板确认上线；地址来自鉴权心跳。安装节点程序不自动部署任意业务 HTTPS 入口和源站适配器，继续按 [URL 接入教程](url-access.md) 配置。
 
-面板生成的命令先用 `/bin/sh` 检查并安装 curl 与 CA，再运行 POSIX 引导脚本，自动补齐 Bash、Python 3.6+、coreutils、flock、用户管理和 libcap 工具。支持 apt、dnf、microdnf、yum、apk、zypper、pacman 和 xbps。Python 用于安装、更新和维护，不是常驻节点进程的运行依赖；不替换系统 Python，也不安装 Docker、Node.js 或 Go。
+默认短指令需要已有 curl 与 CA，地址放在开头，GitHub / 源站切换后显示和复制内容同步变化。没有 curl 的精简系统，展开“缺少 curl 时使用兼容指令”，由 `/bin/sh` 自动安装 curl 与 CA。两种指令随后使用同一个 POSIX 引导脚本，自动补齐 Bash、Python 3.6+、coreutils、flock、用户管理和 libcap 工具。支持 apt、dnf、microdnf、yum、apk、zypper、pacman 和 xbps。Python 用于安装、更新和维护，不是常驻节点进程的运行依赖；不替换系统 Python，也不安装 Docker、Node.js 或 Go。
 
-请直接复制面板完整命令。下例只适用于已有 curl 和 CA 的机器；面板命令还包括缺少环境时的自动引导，不要用占位凭据执行：
+请直接复制面板完整命令。下例只适用于已有 curl 和 CA 的机器；面板折叠的兼容指令还包括缺少下载环境时的自动引导，不要用占位凭据执行：
 
 ```bash
 curl -q -fsSL --proto '=https' --proto-redir '=https' https://datahub.example.com/install.sh -o /tmp/chitanda-bootstrap.sh

@@ -6,7 +6,7 @@
 
 在已部署中台的「节点管理 → 安装指令」选择 GitHub 或源站并复制命令，到目标 Linux 服务器的 root 终端执行。命令自动带上你的控制端和短期安装凭据，不再手工保存 JSON。
 
-面板生成的完整命令从 `/bin/sh` 开始，能自动安装 curl / CA，再补齐 Bash、Python 和其他维护依赖。支持多个发行版、8 种 CPU 架构，以及 systemd / OpenRC / runit / SysV。
+面板默认显示短指令，下载来源地址放在开头，点击 GitHub / 源站后立即切换并复制对应内容。已有 curl / CA 时直接执行；缺少 curl 时展开“兼容指令”，自动准备下载环境。启动脚本继续自动补齐 Bash、Python 和其他维护依赖。支持多个发行版、8 种 CPU 架构，以及 systemd / OpenRC / runit / SysV。
 
 面板仅提供 GitHub 和源站两种方式。安装后入口自动改为“卸载指令”，关闭窗口后可随时重新打开；离线不会重置历史安装状态，但会优先展示恢复安装指令；在线节点也可切换“重新安装”。公开脚本见 [node-bootstrap.sh](deploy/tunnel-control/node-bootstrap.sh)；仅浏览脚本或公开源码不会获得任何节点身份。安装、更新与卸载步骤见 [节点安装文档](docs/node-installation.md)，实测发行版与兼容边界见 [Linux 支持范围](docs/linux-support.md)。系统设置可统一配置节点自动更新，默认每小时检查，失败冷却 6 小时；下载校验、备份和启动失败回退自动执行。
 

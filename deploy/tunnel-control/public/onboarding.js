@@ -3,9 +3,9 @@ let nodeInstallation=null,guideBindingId='';
 function codeBox(text,label,copy=true){return `<div class="onboarding-code"><pre>${esc(text)}</pre>${copy?`<button class="icon-button" data-copy-example aria-label="复制${esc(label)}" title="复制${esc(label)}">${icon('copy')}</button>`:''}</div>`;}
 let installationSource='github',installationLoading=false,installationEpoch=0,installationActionChoice='';
 function paintNodeInstallation(){
- const r=nodeInstallation;if(!r)return;const verb=r.action==='uninstall'?'卸载':'安装';
+ const r=nodeInstallation;if(!r)return;const compatOpen=!!$('#node-install-compat')?.open;const verb=r.action==='uninstall'?'卸载':'安装';
  $('#node-install-title').textContent=r.action==='install'&&r.installed?'重新安装节点':verb+'节点';
- $('#enroll-installation').innerHTML=`<p class="muted">${esc(r.name)} · ${r.online?'在线':r.installed?'离线 · 无法确认本机安装状态':'等待首次上线确认'}</p><div class="installation-source-tabs" role="group" aria-label="脚本来源">${[['github','GitHub'],['origin','源站']].map(([key,label])=>`<button class="button ${installationSource===key?'primary':'secondary'}" data-install-source="${key}" aria-pressed="${installationSource===key}">${label}</button>`).join('')}</div>${r.available?'':`<p class="form-error">${esc(r.error)}</p>`}<pre id="node-install-command">${esc(r.commands[installationSource])}</pre><p class="form-note">${r.action==='uninstall'?'在目标服务器的 root 终端执行。停止服务并移除程序，默认保留配置、缓存和证书；不删除面板节点。':`在目标服务器的 root 终端执行。有效至 ${time(r.expiresAt,true)}；${r.installed?'保留原节点身份与已有配置，程序仍在时可覆盖修复。':'自动准备 Linux 依赖，支持 systemd / OpenRC / runit / SysV，安装后启用自动更新。'}`}</p><div class="dialog-actions">${r.installed?`<button class="text-button" data-install-action="${r.action==='uninstall'?'install':'uninstall'}">${r.action==='uninstall'?'重新安装':'查看卸载指令'}</button>`:''}${r.action==='uninstall'?'':`<button class="button secondary" data-renew-install="${esc(r.nodeId)}">重新生成</button>`}<button class="button primary" data-copy-install ${r.available?'':'disabled'}>${icon('copy')}复制${verb}指令</button></div>`;
+ $('#enroll-installation').innerHTML=`<p class="muted">${esc(r.name)} · ${r.online?'在线':r.installed?'离线 · 无法确认本机安装状态':'等待首次上线确认'}</p><div class="installation-source-tabs" role="group" aria-label="脚本来源">${[['github','GitHub'],['origin','源站']].map(([key,label])=>`<button class="button ${installationSource===key?'primary':'secondary'}" data-install-source="${key}" aria-pressed="${installationSource===key}">${label}</button>`).join('')}</div>${r.available?'':`<p class="form-error">${esc(r.error)}</p>`}<pre id="node-install-command">${esc(r.commands[installationSource])}</pre><p class="form-note">${installationSource==='github'?'GitHub 下载公开启动脚本':'源站下载公开启动脚本'}；需要 curl，其余依赖自动安装。</p><details id="node-install-compat" ${compatOpen?'open':''}><summary>缺少 curl 时使用兼容指令</summary><pre id="node-install-compat-command">${esc(r.compatCommands[installationSource])}</pre><button class="button secondary" data-copy-compat ${r.available?'':'disabled'}>复制兼容${verb}指令</button></details><p class="form-note">${r.action==='uninstall'?'在目标服务器的 root 终端执行。停止服务并移除程序，默认保留配置、缓存和证书；不删除面板节点。':`在目标服务器的 root 终端执行。有效至 ${time(r.expiresAt,true)}；${r.installed?'保留原节点身份与已有配置，程序仍在时可覆盖修复。':'自动准备 Linux 依赖，支持 systemd / OpenRC / runit / SysV，安装后启用自动更新。'}`}</p><div class="dialog-actions">${r.installed?`<button class="text-button" data-install-action="${r.action==='uninstall'?'install':'uninstall'}">${r.action==='uninstall'?'重新安装':'查看卸载指令'}</button>`:''}${r.action==='uninstall'?'':`<button class="button secondary" data-renew-install="${esc(r.nodeId)}">重新生成</button>`}<button class="button primary" data-copy-install ${r.available?'':'disabled'}>${icon('copy')}复制${verb}指令</button></div>`;
 }
 async function openNodeInstallation(id,action=''){
  if(installationLoading)return;installationLoading=true;
@@ -26,14 +26,14 @@ function onboardingGuide(){
 }
 document.addEventListener('change',event=>{if(event.target.id==='guide-binding'){guideBindingId=event.target.value;render();}});
 document.addEventListener('click',async event=>{
- const b=event.target.closest('[data-copy-example],[data-copy-install],[data-renew-install],[data-install-action],[data-install-source],[data-guide-tunnel]');if(!b)return;
+ const b=event.target.closest('[data-copy-example],[data-copy-install],[data-copy-compat],[data-renew-install],[data-install-action],[data-install-source],[data-guide-tunnel]');if(!b)return;
  try{
   if(b.dataset.guideTunnel){guideBindingId=data.dns?.bindings.find(v=>v.tunnelId===b.dataset.guideTunnel)?.id||'';view='guide';render();return;}
   if(b.dataset.installSource){installationSource=b.dataset.installSource;paintNodeInstallation();return;}
   if(b.dataset.installAction){await openNodeInstallation(nodeInstallation.nodeId,b.dataset.installAction);return;}
   if(b.dataset.renewInstall){await openNodeInstallation(b.dataset.renewInstall,installationActionChoice);return;}
   let text;if(b.hasAttribute('data-copy-example'))text=b.closest('.onboarding-code').querySelector('pre').textContent;
-  else{if(!nodeInstallation||nodeInstallation.action==='install'&&Date.now()>=Date.parse(nodeInstallation.expiresAt))throw Error('安装命令已过期，请重新生成');text=nodeInstallation.commands[installationSource];}
+  else{if(!nodeInstallation||nodeInstallation.action==='install'&&Date.now()>=Date.parse(nodeInstallation.expiresAt))throw Error('安装命令已过期，请重新生成');text=(b.hasAttribute('data-copy-compat')?nodeInstallation.compatCommands:nodeInstallation.commands)[installationSource];}
   await navigator.clipboard.writeText(text);toast('已复制');
  }catch(error){toast(error.message||'复制失败，请手动选择命令',true);}
 });

@@ -14,7 +14,7 @@
 | Arch | pacman | 已实现包管理器分支；本次测试主机未取得匹配架构镜像，未做发行版实测 |
 | Void | xbps | 已实现包管理器和 runit 分支；本次未做 Void 发行版实测，runit 在隔离 Debian 容器实际启动 / 停止通过 |
 
-精简系统可从只有 `/bin/sh` 开始，缺少 curl、CA、Bash、Python 3.6+、基础文件工具、flock、用户管理和 setcap 时自动安装。已有 curl-minimal / coreutils-single 的系统不强制换成冲突的大包。包管理和下载有有界重试，下载失败再尝试 IPv4 / IPv6，直达源站仍按域名验证 TLS。
+面板默认提供短指令，已有 curl / CA 时直接执行。精简系统可展开“兼容指令”，从只有 `/bin/sh` 开始，缺少 curl、CA、Bash、Python 3.6+、基础文件工具、flock、用户管理和 setcap 时自动安装。已有 curl-minimal / coreutils-single 的系统不强制换成冲突的大包。包管理和下载有有界重试，下载失败再尝试 IPv4 / IPv6，直达源站仍按域名验证 TLS。
 
 Debian 10 / 11 默认源失效时，可使用 Debian 官方归档的临时源和列表目录，保留签名验证，不覆盖系统 sources.list。其他已停止维护且软件源失效的版本会明确报错；不会下载不明源或关闭签名。Arch 不执行局部刷新 `pacman -Sy`，包数据库为空或系统长期未升级时，应由管理员先完成正常系统更新。
 

@@ -27,12 +27,15 @@ try:
    else:self.send_error(404)
  server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler);port=server.server_port;context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(str(cert),str(key));server.socket=context.wrap_socket(server.socket,server_side=True);threading.Thread(target=server.serve_forever,daemon=True).start()
  command=command_source.replace(':44443',':'+str(port));(root/'command.sh').write_text(command)
+ short=short_command_source.replace(':44443',':'+str(port));(root/'short-command.sh').write_text(short);(root/'failed-command.sh').write_text(short.replace('/install.sh', '/missing.sh',1))
  script='''set -eu
 if [ "$1" = openrc ]; then (unset SSL_CERT_FILE CURL_CA_BUNDLE; apk add --no-cache openrc); mkdir -p /run/openrc; touch /run/openrc/softlevel; cat /etc/ssl/certs/ca-certificates.crt /qa/ca.pem >/tmp/test-ca.pem; export SSL_CERT_FILE=/tmp/test-ca.pem CURL_CA_BUNDLE=/tmp/test-ca.pem; fi
 if command -v curl >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; then echo 'fixture unexpectedly has dependencies' >&2; exit 1; fi
 mkdir -p /usr/local/share/ca-certificates
 cp /qa/ca.pem /usr/local/share/ca-certificates/chitanda-qa.crt
 sh /qa/command.sh
+if sh /qa/failed-command.sh; then echo 'failed download incorrectly succeeded' >&2; exit 1; fi
+sh /qa/short-command.sh
 /usr/local/bin/chitanda-transit -version
 test -x /usr/local/sbin/chitanda-node
 test -f /etc/chitanda-transit/config.json
