@@ -27,7 +27,7 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.9.0"
+const version = "2.9.2"
 
 type Route struct {
 	RelayIDs   []string `json:"relayIds,omitempty"`
@@ -118,6 +118,8 @@ type Engine struct {
 	lastError        string
 	pools            map[string]chan net.Conn
 	listeners        map[string]net.Listener
+	listenerErrors   map[string]string
+	listenerMu       sync.Mutex
 	outbound         chan struct{}
 	slots            chan struct{}
 	brokerAddress    string
@@ -158,6 +160,7 @@ func (e *Engine) err(err error) {
 	}
 }
 func (e *Engine) report() map[string]any {
+	ports := collectPorts()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	memory := m.Sys
@@ -173,6 +176,10 @@ func (e *Engine) report() map[string]any {
 	ls := []string{}
 	for id := range e.listeners {
 		ls = append(ls, id)
+	}
+	listenerErrors := map[string]string{}
+	for id, value := range e.listenerErrors {
+		listenerErrors[id] = value
 	}
 	linkReports := map[string]any{}
 	for key, l := range e.links {
@@ -190,7 +197,7 @@ func (e *Engine) report() map[string]any {
 			}
 		}
 	}
-	return map[string]any{"routeChecks": e.checkReports(), "capabilities": map[string]any{"routeProbe": 1, "relayChain": 1, "directEndpoint": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
+	return map[string]any{"ports": ports, "listenerErrors": listenerErrors, "routeChecks": e.checkReports(), "capabilities": map[string]any{"routeProbe": 1, "relayChain": 1, "directEndpoint": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
 }
 func (e *Engine) syncConfig() error {
 	e.syncMu.Lock()
@@ -699,6 +706,8 @@ func (e *Engine) dialContext(ctx context.Context, cli *client.Client, h Hello) (
 	return c, nil
 }
 func (e *Engine) reconcileListeners() {
+	e.listenerMu.Lock()
+	defer e.listenerMu.Unlock()
 	cfg := e.config()
 	desired := map[string]Route{}
 	for _, r := range cfg.Routes {
@@ -715,6 +724,16 @@ func (e *Engine) reconcileListeners() {
 		}
 	}
 	e.mu.Unlock()
+	e.mu.Lock()
+	if e.listenerErrors == nil {
+		e.listenerErrors = map[string]string{}
+	}
+	for id := range e.listenerErrors {
+		if _, ok := desired[id]; !ok {
+			delete(e.listenerErrors, id)
+		}
+	}
+	e.mu.Unlock()
 	for id, r := range desired {
 		e.mu.RLock()
 		_, ok := e.listeners[id]
@@ -725,9 +744,17 @@ func (e *Engine) reconcileListeners() {
 		ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(r.ListenPort)))
 		if err != nil {
 			e.err(err)
+			e.mu.Lock()
+			if strings.Contains(strings.ToLower(err.Error()), "address already in use") {
+				e.listenerErrors[id] = "port-in-use"
+			} else {
+				e.listenerErrors[id] = "listen-failed"
+			}
+			e.mu.Unlock()
 			continue
 		}
 		e.mu.Lock()
+		delete(e.listenerErrors, id)
 		e.listeners[id] = ln
 		e.mu.Unlock()
 		go e.serveListener(ln, r.ID)
