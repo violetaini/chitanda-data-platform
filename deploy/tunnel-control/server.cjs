@@ -43,7 +43,7 @@ for(const r of state.relays)ensureCertificate(r);save();
 const report=id=>{const r=reports.get(id);return r?{...r,online:Date.now()-r.seen<50000}:{online:false};};
 const routeChecks=require('./route-tests.cjs')({getState:()=>state,getReport:report,getSettings:()=>state.settings.routeChecks,storageFile:path.join(DATA,'route-checks.json')});
 const domains=require('./domains.cjs')({dataDir:DATA,getState:()=>state,save,audit});
-const installations=require('./node-installations.cjs')({dataDir:DATA,releaseDir:process.env.CT_RELEASE_DIR||path.join(ROOT,'releases'),getState:()=>state,enrollment,audit});
+const installations=require('./node-installations.cjs')({dataDir:DATA,releaseDir:process.env.CT_RELEASE_DIR||path.join(ROOT,'releases'),getState:()=>state,getReport:report,enrollment,audit});
 const dnsAddressSync=require('./dns-address-sync.cjs')({getState:()=>state,syncAddresses:domains.syncAddresses,isBusy:domains.isBusy,save,audit});
 setInterval(()=>{dnsAddressSync.tick().catch(()=>console.error('DNS address maintenance failed'));},5000).unref();
 const tunnelManager=tunnelModel({getState:()=>state,validateRoute,ensureCertificates:()=>{for(const r of state.relays)ensureCertificate(r);},audit});
@@ -196,7 +196,7 @@ const server=http.createServer(async(req,res)=>{try{
    if(req.method==='DELETE'){if(state.domains?.some(b=>state.routes.some(r=>[r.source,r.target,r.relayId].includes(id)&&[b.mainlandRouteId,b.internationalRouteId].includes(r.id))))fail('请先处理绑定此节点的业务域名',409);const linked=state.routes.filter(r=>r.source===id||r.target===id||r.relayId===id),b=await body(req);if(linked.length&&!b.cascade)return json(res,409,{error:'节点被数据通道引用，请确认一并删除关联数据通道',routes:linked.map(r=>r.name)});state.routes=state.routes.filter(r=>!linked.includes(r));state.nodes=state.nodes.filter(x=>x.id!==id);state.relays=state.relays.filter(x=>x.id!==id);reports.delete(id);history.delete(id);state.version++;audit('删除节点',n.name+' · 撤销凭据并删除 '+linked.length+' 条关联数据通道');return json(res,200,{ok:true,deletedRoutes:linked.length});}
    if(req.method==='PATCH'){const b=await body(req);if(b.name!==undefined){const name=String(b.name).trim();if(!name||name.length>60)fail('节点名称应为 1–60 字符');n.name=name;}state.version++;audit('更新节点',n.name);return json(res,200,{ok:true});}
   }
-  if(p===BASE+'/api/installations'&&req.method==='POST'){const b=await body(req);if(Object.keys(b).some(k=>k!=='id')||typeof b.id!=='string')fail('安装命令参数不正确');return json(res,200,installations.issue(b.id));}
+  if(p===BASE+'/api/installations'&&req.method==='POST'){const b=await body(req);if(Object.keys(b).some(k=>!['id','action'].includes(k))||typeof b.id!=='string')fail('安装命令参数不正确');return json(res,200,installations.issue(b.id,b.action));}
   if(p===BASE+'/api/enrollment'&&req.method==='POST'){const b=await body(req),relay=state.relays.find(n=>n.id===b.id),n=relay||state.nodes.find(n=>n.id===b.id);if(!n)fail('节点不存在',404);audit('获取接入配置',n.name);return json(res,200,enrollment(n,!!relay));}
   return json(res,404,{error:'接口不存在'});
  }

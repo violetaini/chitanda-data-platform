@@ -3,7 +3,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 function fixture(t){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ct-installs-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const releaseDir=path.join(dir,'releases');fs.mkdirSync(releaseDir);
  const binary=Buffer.from('fixture release'),file='chitanda-transit-linux-amd64';fs.writeFileSync(path.join(releaseDir,file),binary);fs.writeFileSync(path.join(releaseDir,'manifest.json'),JSON.stringify({version:'2.7.2',assets:{'linux-amd64':{file,sha256:crypto.createHash('sha256').update(binary).digest('hex'),size:binary.length}}}));
- const state={nodes:[{id:'node-fixture',name:'测试节点',token:'a'.repeat(64)}],relays:[]};let time=Date.now();const opts={dataDir:dir,releaseDir,getState:()=>state,enrollment:n=>({id:n.id,token:n.token,role:'agent',controller:'https://controller.example.com',controllerAddress:'8.8.8.8:443',ca:'PUBLIC CA FIXTURE'}),audit:()=>{},now:()=>time};
+ const state={nodes:[{id:'node-fixture',name:'测试节点',token:'a'.repeat(64)}],relays:[]};let time=Date.now();const opts={dataDir:dir,releaseDir,getState:()=>state,getReport:()=>({online:true}),enrollment:n=>({id:n.id,token:n.token,role:'agent',controller:'https://controller.example.com',controllerAddress:'8.8.8.8:443',ca:'PUBLIC CA FIXTURE'}),audit:()=>{},now:()=>time};
  const m=manager(opts);return {m,dir,releaseDir,state,opts,advance:ms=>time+=ms,ticket:info=>info.commands.github.match(/--ticket '([a-f0-9]{64})'/)[1]};
 }
 test('short-lived installation leases bind to one node and first server, survive restart, and never persist raw secrets',t=>{
@@ -31,4 +31,11 @@ test('installed state survives manager restart and does not issue installation c
  const f=fixture(t);f.state.nodes[0].installation={status:'installed',installedAt:new Date().toISOString()};
  const info=manager(f.opts).issue('node-fixture');assert.equal(info.action,'uninstall');assert.equal(info.expiresAt,null);assert.equal(info.installed,true);assert.match(info.commands.github,/ uninstall$/);assert.match(info.commands.origin,/--resolve/);assert.ok(!JSON.stringify(info).includes(f.state.nodes[0].token));assert.ok(!info.commands.github.includes('--ticket'));
  f.state.nodes[0].installation.status='uninstalled';assert.equal(manager(f.opts).issue('node-fixture').action,'install');
+});
+
+
+test('offline or explicitly requested reinstall returns a lease for the original identity without changing installed state',t=>{
+ const f=fixture(t);f.state.nodes[0].installation={status:'installed',installedAt:new Date().toISOString()};const before=structuredClone(f.state);
+ const offline=manager({...f.opts,getReport:()=>({online:false})}),info=offline.issue('node-fixture');assert.equal(info.installed,true);assert.equal(info.online,false);assert.equal(info.action,'install');assert.match(info.commands.github,/--ticket/);assert.equal(offline.claim({ticket:f.ticket(info)},'9.9.9.9').config.token,f.state.nodes[0].token);assert.deepEqual(f.state,before);
+ const online=manager(f.opts).issue('node-fixture','install');assert.equal(online.action,'install');assert.equal(online.online,true);assert.match(online.commands.origin,/--ticket/);assert.equal(offline.issue('node-fixture','uninstall').action,'uninstall');assert.throws(()=>offline.issue('node-fixture','unknown'),e=>e.status===400);
 });

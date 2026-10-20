@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const fail=(message,status=400)=>{throw Object.assign(Error(message),{status});};
 const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
 const quote=s=>"'"+String(s).replace(/'/g,"'\\''")+"'";
-module.exports=function({dataDir,releaseDir,getState,enrollment,audit,now=Date.now}){
+module.exports=function({dataDir,releaseDir,getState,getReport=()=>({online:false}),enrollment,audit,now=Date.now}){
  const file=path.join(dataDir,'node-installations.json'),attempts=new Map();
  let tickets=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):[];
  const save=()=>{fs.writeFileSync(file+'.tmp',JSON.stringify(tickets),{mode:0o600});fs.chmodSync(file+'.tmp',0o600);fs.renameSync(file+'.tmp',file);};
@@ -22,20 +22,21 @@ module.exports=function({dataDir,releaseDir,getState,enrollment,audit,now=Date.n
   if(!Object.keys(assets).length)fail('没有可用的 Linux 安装包',503);
   return {version:raw.version,assets};
  }
- function issue(id){
+ function issue(id,requestedAction){
+  if(requestedAction!==undefined&&!['install','uninstall'].includes(requestedAction))fail('节点操作不正确');
   const n=node(id);if(!n)fail('节点不存在',404);const config=enrollment(n,getState().relays.includes(n));
   const server=new URL(config.controller);if(server.protocol!=='https:'||server.username||server.password||server.pathname!=='/'||server.search||server.hash)fail('请配置有效的 HTTPS 控制端地址',503);
   let available,error;try{available=release();}catch(e){error=e.message;}
   tickets=tickets.filter(v=>v.until>now()&&node(v.id));if(tickets.length>=128)tickets.shift();
-  const installed=n.installation?.status==='installed',ticket=installed?'':crypto.randomBytes(32).toString('hex'),until=installed?null:now()+15*60000;
-  if(!installed){tickets.push({digest:hash(ticket),id,credential:hash(n.token),until});save();}
+  const installed=n.installation?.status==='installed',online=!!getReport(id).online,action=requestedAction||(installed&&online?'uninstall':'install'),install=action==='install',ticket=install?crypto.randomBytes(32).toString('hex'):'',until=install?now()+15*60000:null;
+  if(install){tickets.push({digest:hash(ticket),id,credential:hash(n.token),until});save();}
   const address=config.controllerAddress||'',resolve=address?' --server-address '+quote(address):'';
   let direct='';if(address){const m=address.match(/^(.*):(\d+)$/),ip=m?.[1].replace(/^\[|\]$/g,'');if(!m||!net.isIP(ip)||Number(m[2])!==Number(server.port||443))fail('控制端直达地址须为匹配 HTTPS 端口的 IP',503);direct=server.hostname+':'+(server.port||443)+':'+(net.isIP(ip)===6?'['+ip+']':ip);}
   const github='https://raw.githubusercontent.com/violetaini/chitanda-data-platform/main/deploy/tunnel-control/node-bootstrap.sh';
   const launch=(url,args,origin=false)=>'bash <(curl -fsSL'+(origin&&direct?' --resolve '+quote(direct):'')+' '+quote(url)+') '+args;
   const installArgs='install --server '+quote(server.origin)+' --ticket '+quote(ticket);
-  if(!installed)audit('生成节点安装命令',n.name+' · 有效期 15 分钟');
-  return {nodeId:id,name:n.name,installed,action:installed?'uninstall':'install',expiresAt:until?new Date(until).toISOString():null,available:installed||!!available,error:installed?undefined:error,repository:'https://github.com/violetaini/chitanda-data-platform',commands:installed?{github:launch(github,'uninstall'),origin:launch(server.origin+'/install.sh','uninstall',true)}:{github:launch(github,installArgs+resolve),origin:launch(server.origin+'/install.sh',installArgs+resolve,true)}};
+  if(install)audit(installed?'生成节点重新安装命令':'生成节点安装命令',n.name+' · 有效期 15 分钟');
+  return {nodeId:id,name:n.name,installed,online,action,expiresAt:until?new Date(until).toISOString():null,available:!install||!!available,error:install?error:undefined,repository:'https://github.com/violetaini/chitanda-data-platform',commands:!install?{github:launch(github,'uninstall'),origin:launch(server.origin+'/install.sh','uninstall',true)}:{github:launch(github,installArgs+resolve),origin:launch(server.origin+'/install.sh',installArgs+resolve,true)}};
  }
  function claim(input,ip){
   if(!net.isIP(ip))fail('节点来源地址不正确',403);

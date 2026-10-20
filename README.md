@@ -10,7 +10,7 @@
 bash <(curl -fsSL https://datahub.example.com/install.sh) install --server 'https://datahub.example.com' --ticket '从你自己的面板复制15分钟安装凭据'
 ```
 
-上面是格式示例，不能原样执行。面板仅提供 GitHub 和源站两种方式。安装后入口自动改为“卸载指令”，关闭窗口后可随时重新打开；离线不会重置已安装状态。公开脚本见 [node-bootstrap.sh](deploy/tunnel-control/node-bootstrap.sh)；仅浏览脚本或公开源码不会获得任何节点身份。安装、更新与卸载步骤见 [节点安装文档](docs/node-installation.md)。
+上面是格式示例，不能原样执行。面板仅提供 GitHub 和源站两种方式。安装后入口自动改为“卸载指令”，关闭窗口后可随时重新打开；离线不会重置历史安装状态，但会优先展示恢复安装指令；在线节点也可切换“重新安装”。公开脚本见 [node-bootstrap.sh](deploy/tunnel-control/node-bootstrap.sh)；仅浏览脚本或公开源码不会获得任何节点身份。安装、更新与卸载步骤见 [节点安装文档](docs/node-installation.md)。
 
 ## 目录
 
