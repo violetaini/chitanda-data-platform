@@ -292,3 +292,5 @@ label{font-size:15px}input,select,.certificate-settings textarea{font-size:16px}
 .system-settings-enable input[type=checkbox]:hover{border-color:#ae96be;box-shadow:0 0 0 3px #ab92bb12}
 .system-settings-enable input[type=checkbox]:disabled{opacity:.5;cursor:not-allowed}
 @media(prefers-reduced-motion:reduce){.system-settings-enable input[type=checkbox],.system-settings-enable input[type=checkbox]::before{transition:none}}
+
+.guide-addresses{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin:24px 0}.guide-addresses>div{min-width:0}.guide-addresses>div>small{color:var(--muted);font-size:15px}.guide-addresses .onboarding-code{margin-bottom:8px}@media(max-width:850px){.guide-addresses{grid-template-columns:minmax(0,1fr)}}
