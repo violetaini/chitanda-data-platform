@@ -32,6 +32,15 @@ const {createAdminPasswordHash}=require('../deploy/tunnel-control/password-auth.
   check(!(await page.locator('.onboarding-intro').innerText()).includes('允许范围'),'requested range banner is removed');
   check(await page.locator('.guide-transfer .onboarding-steps>li').count()===3,'main tutorial has just three steps');
   check((await page.locator('.guide-more details').evaluateAll(xs=>xs.every(x=>!x.open))),'extra material starts collapsed');
+  const chitanda=page.locator('[data-guide-section=chitanda]'),help=page.locator('[data-guide-section=troubleshooting]');
+  await chitanda.locator('summary').click();await help.locator('summary').click();
+  await page.waitForFunction(()=>document.querySelector('[data-guide-section=chitanda]').open&&document.querySelector('[data-guide-section=troubleshooting]').open);
+  const lastPoll=await page.evaluate(()=>data.now);await page.mouse.wheel(0,600);await page.waitForFunction(now=>data.now!==now,lastPoll,{timeout:12000});
+  check(await chitanda.evaluate(x=>x.open)&&await help.evaluate(x=>x.open),'scrolling and real automatic polling preserve independent expanded sections');
+  await help.locator('summary').click();await page.evaluate(()=>refresh());check(await chitanda.evaluate(x=>x.open)&&!(await help.evaluate(x=>x.open)),'manual collapse persists without closing another section');
+  await page.locator('#guide-transfer-kind').selectOption('file');check(await chitanda.evaluate(x=>x.open),'changing example keeps guide expanded');await page.locator('#guide-transfer-kind').selectOption('json');
+  await page.locator('nav [data-view=nodes]').click();await page.locator('nav [data-view=guide]').click();check(await chitanda.evaluate(x=>x.open)&&!(await help.evaluate(x=>x.open)),'returning to the guide preserves manual choices');
+  await chitanda.locator('summary').click();await page.evaluate(()=>refresh());check(!(await chitanda.evaluate(x=>x.open)),'manually closing stays closed after refresh');
   // Execute copied examples only against a local receiving fixture; no production writes.
   const received=[],receiver=require('node:http').createServer(async(req,res)=>{const chunks=[];for await(const chunk of req)chunks.push(chunk);received.push({method:req.method,headers:req.headers,body:Buffer.concat(chunks)});res.setHeader('Content-Type','application/octet-stream');res.end(req.method==='GET'?'downloaded fixture bytes':JSON.stringify({received:true}));});
   await new Promise(resolve=>receiver.listen(0,'127.0.0.1',resolve));

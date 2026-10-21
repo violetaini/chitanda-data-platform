@@ -1,6 +1,6 @@
 {
   "name": "chitanda-data-platform",
-  "version": "2.20.4",
+  "version": "2.20.5",
   "private": true,
   "dependencies": {
     "sharp": "0.35.5"

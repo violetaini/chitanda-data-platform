@@ -1,6 +1,12 @@
 'use strict';
 let nodeInstallation=null,guideBindingId='',guideRouteId='',guideTunnelId='',guideTargetURL='',guideTransferKind='json';
 function codeBox(text,label,copy=true){return `<div class="onboarding-code"><pre>${esc(text)}</pre>${copy?`<button class="icon-button" data-copy-example aria-label="复制${esc(label)}" title="复制${esc(label)}">${icon('copy')}</button>`:''}</div>`;}
+const guideDetailsOpen=new Set();
+function rememberGuideDetails(){
+ document.querySelectorAll('.guide-more details[data-guide-section]').forEach(el=>{
+  if(el.open)guideDetailsOpen.add(el.dataset.guideSection);else guideDetailsOpen.delete(el.dataset.guideSection);
+ });
+}
 let installationSource='github',installationLoading=false,installationEpoch=0,installationActionChoice='';
 function paintNodeInstallation(){
  const r=nodeInstallation;if(!r)return;const compatOpen=!!$('#node-install-compat')?.open;const verb=r.action==='uninstall'?'卸载':'安装';
@@ -51,9 +57,9 @@ CHITANDA_SYNC_TARGET=${targetOrigin}`;
  ${codeBox(request,'HTTPS 请求示例')}
  <p class="guide-payload-note">${guideTransferKind==='json'?'<code>--data-binary</code> 后面的 JSON 就是实际发送的数据，curl 会以 POST 发出；把它换成你的内容。':guideTransferKind==='file'?'<code>@./example.bin</code> 表示读取发送方的本地文件，以 POST 把文件内容发给对方。替换成你的文件路径；接收接口需支持二进制文件内容。':'此示例使用 GET；对方返回的内容保存到发送方的 <code>./response.dat</code>，可改成自己的保存路径。'}</p></li>
  <li><strong>对方接收，结果原路返回</strong><p>目标业务接口收到同一份 JSON 或文件内容，由它负责保存、入库或处理。JSON 和上传示例会把对方返回的结果直接显示在终端；读取示例则保存到文件。</p><p>隧道负责把请求和回复送到两端。对方必须已有接收接口，隧道不会自动创建接口或替业务保存文件。反方向发送时，切换上方“请求方向”即可查看对应示例。</p></li></ol></section>
- <section class="panel guide-more"><details><summary>Chitanda 怎么接入</summary><p>Chitanda 已有数据同步逻辑。在业务后台的环境配置填写三项，再重新加载后台；之后事件、设置和文件分片由它自动发送，不用手工执行每次 curl。</p>${codeBox(env,'业务环境配置')}<p><code>SYNC_PEERS</code> 是隧道入口，<code>TUNNEL_TOKEN</code> 是本隧道令牌，<code>SYNC_TARGET</code> 是对端原网站地址。重置令牌后，业务后台也要更新。</p></details>
- <details><summary>接入没成功时看这里</summary><p>401：检查令牌；403：检查入口权限和目标设置；404：检查业务接口路径；502 或超时：检查节点、回源地址及证书。</p><p>入口证书在系统设置管理，节点管理确认应用。目标域名经过 CDN 或需要指定对端源站时，在“URL 请求接入 → 固定回源地址”填写公开 IP:端口。</p><p>同一 IP 有多个网站时，目标 URL 的域名决定交给哪个网站。业务另有 Authorization 时，用 <code>X-Target-Authorization</code> 携带。大文件按业务接口分片，每次请求不超过 16 MiB。</p></details>
- <details><summary>新节点的安装与卸载</summary><p>节点管理添加节点后，选择 GitHub 或源站并复制安装指令。离线可重新安装，在线可查看卸载指令；卸载默认保留配置和证书。自动更新策略在系统设置调整。</p><button class="button secondary" data-view="nodes">前往节点管理 ${icon('arrow')}</button></details></section></div>`;
+ <section class="panel guide-more"><details data-guide-section="chitanda" ${guideDetailsOpen.has('chitanda')?'open':''}><summary>Chitanda 怎么接入</summary><p>Chitanda 已有数据同步逻辑。在业务后台的环境配置填写三项，再重新加载后台；之后事件、设置和文件分片由它自动发送，不用手工执行每次 curl。</p>${codeBox(env,'业务环境配置')}<p><code>SYNC_PEERS</code> 是隧道入口，<code>TUNNEL_TOKEN</code> 是本隧道令牌，<code>SYNC_TARGET</code> 是对端原网站地址。重置令牌后，业务后台也要更新。</p></details>
+ <details data-guide-section="troubleshooting" ${guideDetailsOpen.has('troubleshooting')?'open':''}><summary>接入没成功时看这里</summary><p>401：检查令牌；403：检查入口权限和目标设置；404：检查业务接口路径；502 或超时：检查节点、回源地址及证书。</p><p>入口证书在系统设置管理，节点管理确认应用。目标域名经过 CDN 或需要指定对端源站时，在“URL 请求接入 → 固定回源地址”填写公开 IP:端口。</p><p>同一 IP 有多个网站时，目标 URL 的域名决定交给哪个网站。业务另有 Authorization 时，用 <code>X-Target-Authorization</code> 携带。大文件按业务接口分片，每次请求不超过 16 MiB。</p></details>
+ <details data-guide-section="nodes" ${guideDetailsOpen.has('nodes')?'open':''}><summary>新节点的安装与卸载</summary><p>节点管理添加节点后，选择 GitHub 或源站并复制安装指令。离线可重新安装，在线可查看卸载指令；卸载默认保留配置和证书。自动更新策略在系统设置调整。</p><button class="button secondary" data-view="nodes">前往节点管理 ${icon('arrow')}</button></details></section></div>`;
 }
 document.addEventListener('change',event=>{if(event.target.id==='guide-transfer-kind'){guideTransferKind=event.target.value;render();}if(event.target.id==='guide-tunnel'){guideTunnelId=event.target.value;guideBindingId='';guideRouteId='';guideTargetURL='';render();}if(event.target.id==='guide-route'){guideRouteId=event.target.value;guideTargetURL='';render();}if(event.target.id==='guide-target'){guideTargetURL=event.target.value;render();}if(event.target.id==='guide-binding'){guideBindingId=event.target.value;render();}});
 document.addEventListener('click',async event=>{
