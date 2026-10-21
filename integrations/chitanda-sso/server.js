@@ -17,6 +17,7 @@ const guard = require('./lib/request-guard')();
 
 const store = new Store();
 const keyPair = auth.ensureKeyPair(config.dataDir);
+const missingUserHash = auth.createPasswordHash(crypto.randomBytes(32).toString('hex'));
 const sourceAccess=process.env.SSO_ACCESS_MODE?require('./lib/source-access')({CT_ACCESS_MODE:process.env.SSO_ACCESS_MODE,CT_BLOCKED_SUBNETS:process.env.SSO_BLOCKED_SUBNETS,CT_SOURCE_EXCEPTIONS:process.env.SSO_SOURCE_EXCEPTIONS}):{permits:()=>true};
 
 const PUBLIC_DIR = path.resolve(__dirname, 'public');
@@ -95,16 +96,19 @@ const getSafeLogoutRedirect = value => security.safeLogout(value, config.issuer,
 
 function parseBody(req) {
   return new Promise((resolve, reject) => {
-    let body = ''; let size=0;
+    const chunks=[]; let size=0;
     req.on('data', chunk => {
-      size+=chunk.length; body += chunk;
+      size+=chunk.length;
       if (size > 65536) {
         req.destroy();
-        reject(new Error('Payload too large'));
+        reject(Object.assign(new Error('Payload too large'),{status:413}));
+        return;
       }
+      chunks.push(chunk);
     });
     req.on('end', () => {
       if(req.browserSession&&!store.activeSession(req.browserSession.id,req.browserSession.user_id))return reject(Object.assign(Error('Session revoked'),{status:401}));
+      const body=Buffer.concat(chunks).toString('utf8');
       const contentType = req.headers['content-type'] || '';
       if (contentType.includes('application/json')) {
         try {
@@ -124,6 +128,7 @@ function parseBody(req) {
       }
     });
     req.on('error', reject);
+    req.on('aborted',()=>reject(Object.assign(Error('Request aborted'),{status:400})));
   });
 }
 
@@ -228,7 +233,7 @@ const server = http.createServer(async (req, res) => {
       if(req.headers['sec-fetch-site']==='cross-site'||(req.headers.origin&&req.headers.origin!==config.issuer))return jsonResponse(res,403,{error:'invalid_origin'});
       if(parseCookies(req.headers.cookie)[config.cookieName] && req.headers.origin!==config.issuer)return jsonResponse(res,403,{error:'origin_required'});
     }
-    if(pathname==='/api/auth/login'||pathname==='/api/auth/change-password'||pathname==='/api/auth/totp/disable')guard.begin(req,res,'password',{limit:1000,concurrent:2});
+    if(['/api/auth/login','/api/auth/change-password','/api/auth/totp/setup','/api/auth/totp/disable'].includes(pathname))guard.begin(req,res,'password',{limit:1000,concurrent:2});
     // 1. OIDC Discovery
     if (pathname === '/.well-known/openid-configuration' && method === 'GET') {
       return jsonResponse(res, 200, oidc.getDiscoveryConfiguration());
@@ -410,6 +415,12 @@ const server = http.createServer(async (req, res) => {
           return jsonResponse(res, 400, { error: 'invalid_grant', error_description: 'Refresh token invalid or expired' });
         }
 
+        const client = store.getOAuthClient(record.client_id);
+        if (!client || clientId!==record.client_id || (client.client_secret && !safeTimingCompare(client.client_secret,clientSecret))) {
+          return jsonResponse(res, 401, { error: 'invalid_client' });
+        }
+
+        // Only the authenticated owner may trigger replay revocation.
         if (record.revoked === 1) {
           store.revokeSession(record.session_id,record.user_id);
           store.logAudit('SECURITY_ALERT_REFRESH_TOKEN_REPLAY', record.user_id, null, ip, userAgent, {
@@ -420,18 +431,6 @@ const server = http.createServer(async (req, res) => {
             error: 'invalid_grant',
             error_description: 'Refresh token has already been consumed (replay detected)'
           });
-        }
-
-        const client = store.getOAuthClient(record.client_id);
-        if (!client || clientId!==record.client_id) {
-          return jsonResponse(res, 400, { error: 'invalid_client' });
-        }
-
-        // RFC 6749 Section 6: Client Authentication for refresh token grant
-        if (client.client_secret) {
-          if (!safeTimingCompare(client.client_secret, clientSecret)) {
-            return jsonResponse(res, 401, { error: 'invalid_client', error_description: 'Client authentication failed' });
-          }
         }
 
         if(!store.activeSession(record.session_id,record.user_id)||record.expires_at<=new Date().toISOString()||!store.consumeRefreshToken(refreshToken))return jsonResponse(res,400,{error:'invalid_grant'});
@@ -638,22 +637,17 @@ const server = http.createServer(async (req, res) => {
       }
 
       const user = store.getUserByUsername(username);
-      if (!user) {
+      const validPassword = await auth.verifyPasswordHash(password, user ? user.password_hash : await missingUserHash);
+      if (!user || !validPassword) {
         defense.recordLoginFailure(ip, username);
-        store.logAudit('LOGIN_FAILED', null, username, ip, userAgent, 'Username not found');
+        store.logAudit('LOGIN_FAILED', user?.id, username, ip, userAgent, 'Invalid credentials');
         return jsonResponse(res, 401, { ok: false, error: '账号或密码错误' });
       }
 
-      const validPassword = await auth.verifyPasswordHash(password, user.password_hash);
-      if (!validPassword) {
-        defense.recordLoginFailure(ip, username);
-        store.logAudit('LOGIN_FAILED', user.id, username, ip, userAgent, 'Invalid password');
-        return jsonResponse(res, 401, { ok: false, error: '账号或密码错误' });
-      }
-
-      if(!store.getUserById(user.id)||store.getUserById(user.id).password_hash!==user.password_hash)return jsonResponse(res,401,{error:'credentials_changed'});
+      if(!security.sameCredentials(user,store.getUserById(user.id)))return jsonResponse(res,401,{error:'credentials_changed'});
       // Check TOTP
-      if (user.totp_enabled && user.totp_secret) {
+      if (user.totp_enabled) {
+        if (!user.totp_secret) return jsonResponse(res,401,{ok:false,error:'两步验证配置异常，请联系管理员'});
         if (!totpCode) {
           return jsonResponse(res, 200, {
             ok: false,
@@ -668,7 +662,7 @@ const server = http.createServer(async (req, res) => {
           return jsonResponse(res, 401, { ok: false, error: '动态验证码错误或已过期' });
         }
         // TOTP replay protection
-        const notReplayed = defense.checkAndRecordTotpCode(user.id, totpCode);
+        const notReplayed = store.consumeTotp(user.id, user.totp_secret, totpCode);
         if (!notReplayed) {
           return jsonResponse(res, 401, { ok: false, error: '动态验证码已被使用，请等待 30 秒轮换后输入新口令' });
         }
@@ -681,7 +675,7 @@ const server = http.createServer(async (req, res) => {
 
       store.logAudit('LOGIN_SUCCESS', user.id, username, ip, userAgent, 'Successfully logged in');
 
-      // Set cross-domain root cookie
+      // Host-only cookie; never send the unified identity session to sibling sites.
       const cookie = serializeCookie(config.cookieName, sessionToken, {
         domain: config.cookieDomain,
         path: '/',
@@ -738,6 +732,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const body = await parseBody(req);
+      if(typeof body.old_password!=='string'||typeof body.new_password!=='string'||Buffer.byteLength(body.old_password)>4096||Buffer.byteLength(body.new_password)>4096)return jsonResponse(res,400,{error:'invalid_request'});
       const oldPassword = String(body.old_password || '');
       const newPassword = String(body.new_password || '');
 
@@ -753,7 +748,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const newHash = await auth.createPasswordHash(newPassword);
-      if(!store.activeSession(session.id,user.id))return jsonResponse(res,401,{error:'session_revoked'});
+      if(!store.activeSession(session.id,user.id)||!security.sameCredentials(user,store.getUserById(user.id)))return jsonResponse(res,401,{error:'session_revoked'});
       store.updateUserPassword(user.id, newHash);
 
       // Rotate session: revoke ALL existing sessions for user (including the stale one)
@@ -826,14 +821,19 @@ const server = http.createServer(async (req, res) => {
       const session = getSessionFromRequest(req);
       if (!session) return jsonResponse(res, 401, { ok: false, error: '未登录' });
 
+      const body=await parseBody(req);
+      if(typeof body.password!=='string'||Buffer.byteLength(body.password)>4096)return jsonResponse(res,400,{error:'请输入当前登录密码'});
+      const quota=defense.checkRateLimit('mfa-setup:'+session.user_id,5,300000);if(!quota.allowed)return jsonResponse(res,429,{error:'操作过于频繁，请稍后重试'});
       const current=store.getUserById(session.user_id);
       if(current.totp_enabled)return jsonResponse(res,409,{error:'请先验证并关闭现有两步验证'});
+      if(!await auth.verifyPasswordHash(body.password,current.password_hash))return jsonResponse(res,400,{error:'登录密码验证失败'});
+      if(!store.activeSession(session.id,current.id)||!security.sameCredentials(current,store.getUserById(current.id)))return jsonResponse(res,401,{error:'session_revoked'});
       const secret = auth.generateTotpSecret();
       guard.begin(req,res,'mfa-setup:'+session.user_id,{limit:10,concurrent:1});
       const uri = auth.getTotpUri(session.username, secret, 'Chitanda');
 
       const qrSvg=await QRCode.toString(uri,{type:'svg',width:180,margin:1});
-      if(!store.activeSession(session.id,session.user_id))return jsonResponse(res,401,{error:'session_revoked'});
+      if(!store.activeSession(session.id,session.user_id)||!security.sameCredentials(current,store.getUserById(current.id)))return jsonResponse(res,401,{error:'session_revoked'});
       store.setTotpSecret(session.user_id,secret);
       return jsonResponse(res, 200, {
         ok: true,
@@ -857,6 +857,7 @@ const server = http.createServer(async (req, res) => {
       const code = String(body.code || '').trim();
       const user = store.getUserById(session.user_id);
 
+      if (user.totp_enabled) return jsonResponse(res,409,{error:'两步验证已启用'});
       if (!user.totp_secret) {
         return jsonResponse(res, 400, { ok: false, error: '尚未生成两步验证密钥，请重新发起' });
       }
@@ -867,12 +868,13 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Check replay
-      const notReplayed = defense.checkAndRecordTotpCode(session.user_id, code);
+      const notReplayed = store.consumeTotp(session.user_id, user.totp_secret, code);
       if (!notReplayed) {
         return jsonResponse(res, 400, { ok: false, error: '该动态验证码已被使用，请等待 30 秒轮换后输入新口令' });
       }
 
       store.enableTotp(session.user_id);
+      store.revokeAllSessionsForUser(session.user_id,session.id);
       store.logAudit('TOTP_ENABLED', session.user_id, session.username, ip, userAgent, 'TOTP 2FA enabled');
 
       return jsonResponse(res, 200, { ok: true, message: '两步验证已成功启用！' });
@@ -884,15 +886,20 @@ const server = http.createServer(async (req, res) => {
 
       const body = await parseBody(req);
       const quota=defense.checkRateLimit('mfa-disable:'+session.user_id,5,300000);if(!quota.allowed)return jsonResponse(res,429,{error:'操作过于频繁，请稍后重试'},{'Retry-After':String(quota.retryAfter)});
+      if(typeof body.password!=='string'||Buffer.byteLength(body.password)>4096||typeof body.code!=='string'||!/^\d{6}$/.test(body.code))return jsonResponse(res,400,{error:'请输入当前密码与6位动态验证码'});
       const password = String(body.password || '');
       const user = store.getUserById(session.user_id);
+      if(!user.totp_enabled||!user.totp_secret)return jsonResponse(res,409,{error:'两步验证尚未启用'});
 
       const validPass = await auth.verifyPasswordHash(password, user.password_hash);
       if (!validPass) {
         return jsonResponse(res, 400, { ok: false, error: '登录密码验证失败，无法关闭两步验证' });
       }
 
+      if(!store.activeSession(session.id,user.id)||!security.sameCredentials(user,store.getUserById(user.id)))return jsonResponse(res,401,{error:'session_revoked'});
+      if(!auth.verifyTotp(body.code,user.totp_secret)||!store.consumeTotp(user.id,user.totp_secret,body.code))return jsonResponse(res,400,{error:'动态验证码错误、已过期或已使用'});
       store.disableTotp(session.user_id);
+      store.revokeAllSessionsForUser(session.user_id,session.id);
       store.logAudit('TOTP_DISABLED', session.user_id, session.username, ip, userAgent, 'TOTP 2FA disabled');
 
       return jsonResponse(res, 200, { ok: true, message: '两步验证已关闭' });
@@ -930,8 +937,7 @@ const server = http.createServer(async (req, res) => {
         if (!u || typeof u !== 'string') continue;
         try {
           const parsed = new URL(u.trim());
-          if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') continue;
-          if (parsed.hash) continue;
+          if (!security.exactRedirect(parsed.toString(),[parsed.toString()])) continue;
           validatedUris.push(parsed.toString());
         } catch {}
       }

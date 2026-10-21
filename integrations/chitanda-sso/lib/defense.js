@@ -12,7 +12,6 @@ const AUTH_LOCK_MS = 15 * 60 * 1000;   // 15 minutes lockout
 const ipAttempts = new Map();
 const userAttempts = new Map();
 const genericRateLimits = new Map();
-const usedTotpCodes = new Map();
 
 function sanitizeIp(raw) {
   if (!raw || typeof raw !== 'string') return null;
@@ -121,18 +120,6 @@ function checkRateLimit(key, maxRequests = 20, windowMs = 60 * 1000) {
   return { allowed: true, remaining: maxRequests - record.count };
 }
 
-// Prevent TOTP replay attack within the active 30s window
-function checkAndRecordTotpCode(userId, code) {
-  const key = `${userId}:${code}`;
-  const now = Date.now();
-  const lastUsed = usedTotpCodes.get(key);
-  if (lastUsed && now - lastUsed < 60 * 1000) {
-    return false; // Code was already consumed recently
-  }
-  usedTotpCodes.set(key, now);
-  return true;
-}
-
 // Periodic cleanup of expired entries
 setInterval(() => {
   const now = Date.now();
@@ -151,11 +138,6 @@ setInterval(() => {
       genericRateLimits.delete(key);
     }
   }
-  for (const [key, time] of usedTotpCodes.entries()) {
-    if (now - time > 90 * 1000) {
-      usedTotpCodes.delete(key);
-    }
-  }
 }, 3 * 60 * 1000).unref();
 
 module.exports = {
@@ -163,6 +145,5 @@ module.exports = {
   checkLoginAllowed,
   recordLoginFailure,
   recordLoginSuccess,
-  checkRateLimit,
-  checkAndRecordTotpCode
+  checkRateLimit
 };

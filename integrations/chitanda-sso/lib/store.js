@@ -99,6 +99,13 @@ class Store {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS totp_uses (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        code_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, code_hash)
+      );
+
       CREATE TABLE IF NOT EXISTS ecosystem_apps (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -341,6 +348,15 @@ class Store {
   }
 
   // Session management
+  consumeTotp(userId, secret, code, now = Date.now()) {
+    // Keep all accepted codes for the entire +/- one-step validity window,
+    // including across service restarts. Never store the six-digit code itself.
+    this.db.prepare('DELETE FROM totp_uses WHERE expires_at <= ?').run(now);
+    const result=this.db.prepare('INSERT OR IGNORE INTO totp_uses (user_id, code_hash, expires_at) VALUES (?, ?, ?)')
+      .run(userId, tokenHash(secret+':'+code), now+90000);
+    return result.changes===1;
+  }
+
   createSession(userId, token, ip, userAgent, ttlMs = config.sessionTtlMs) {
     const id = 'ses_' + crypto.randomBytes(12).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
@@ -382,9 +398,9 @@ class Store {
     return this.db.prepare(`
       SELECT id, ip, user_agent, created_at, expires_at, last_active_at, revoked
       FROM sessions
-      WHERE user_id = ? AND revoked = 0 AND expires_at > datetime('now')
+      WHERE user_id = ? AND revoked = 0 AND expires_at > ?
       ORDER BY last_active_at DESC
-    `).all(userId);
+    `).all(userId, new Date().toISOString());
   }
 
   revokeSession(sessionId, userId = null) {

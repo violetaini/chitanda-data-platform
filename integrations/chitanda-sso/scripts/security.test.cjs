@@ -29,5 +29,20 @@ test('new stores require explicit initial credentials and issue random client se
   const Store=require('../lib/store');store=new Store(directory);const c=store.getOAuthClient('data-platform');assert.match(c.client_secret,/^sec_[a-f0-9]{64}$/);assert.deepEqual(c.redirect_uris,['https://datahub.chitanda.net/tunnel/sso/callback']);
   const u=store.getUserByUsername('fixture'),session=store.createSession(u.id,'fixture-cookie','127.0.0.1','test');assert.equal(store.activeSession(session.id,u.id),true);store.revokeSession(session.id);assert.equal(store.activeSession(session.id,u.id),false);
   assert.equal(store.activeSession('missing',u.id),false);
+  const now=Date.now(),code='123456',secret=auth.generateTotpSecret();
+  assert.equal(store.consumeTotp(u.id,secret,code,now),true);
+  assert.equal(store.consumeTotp(u.id,secret,code,now+61000),false,'future-window OTP remains protected beyond 60 seconds');
+  store.db.close();store=new Store(directory);
+  assert.equal(store.consumeTotp(u.id,secret,code,now+89000),false,'OTP replay protection survives a restart');
+  assert.equal(store.consumeTotp(u.id,secret,code,now+91000),true);
+  assert.ok(!store.db.prepare('SELECT code_hash FROM totp_uses').get().code_hash.includes(code));
+  const expired=store.createSession(u.id,'expired','127.0.0.1','test',-60000);
+  assert.ok(!store.listSessionsForUser(u.id).some(s=>s.id===expired.id),'same-day expired sessions are not shown as active');
+  let defense=require('../lib/defense');
+  for(let i=0;i<8;i++)defense.recordLoginFailure('198.51.100.15','fixture');
+  assert.equal(defense.checkLoginAllowed('198.51.100.15','fixture').allowed,false);
+  delete require.cache[require.resolve('../lib/defense')];defense=require('../lib/defense');
+  assert.equal(defense.checkLoginAllowed('198.51.100.15','fixture').allowed,false,'login lockout survives a service restart');
+  assert.equal(defense.getClientIp({socket:{remoteAddress:'198.51.100.15'},headers:{'x-real-ip':'127.0.0.1'}}),'198.51.100.15','untrusted peers cannot spoof a forwarded source');
  }finally{store?.db.close();fs.rmSync(directory,{recursive:true,force:true});}
 });

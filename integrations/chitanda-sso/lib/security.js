@@ -15,4 +15,5 @@ function safeLogout(value,issuer,clients){
 }
 function equal(a,b){return typeof a==='string'&&typeof b==='string'&&crypto.timingSafeEqual(crypto.createHash('sha256').update(a).digest(),crypto.createHash('sha256').update(b).digest());}
 function safeAppUrl(value){try{if(typeof value!=='string'||value.length>2048)return false;const u=new URL(value);return !u.username&&!u.password&&(u.protocol==='https:'||(u.protocol==='http:'&&['127.0.0.1','localhost','[::1]'].includes(u.hostname)));}catch{return false;}}
-module.exports={roles,exactRedirect,safeLogout,equal,safeAppUrl};
+function sameCredentials(before,after){return !!before&&!!after&&before.password_hash===after.password_hash&&before.totp_enabled===after.totp_enabled&&before.totp_secret===after.totp_secret;}
+module.exports={roles,exactRedirect,safeLogout,equal,safeAppUrl,sameCredentials};

@@ -314,10 +314,39 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnDisableTotp = document.getElementById('btn-disable-totp');
   const formVerifyTotp = document.getElementById('form-verify-totp');
   const totpError = document.getElementById('totp-error');
+  const reauthDialog = document.getElementById('dialog-reauth');
+  const reauthForm = document.getElementById('form-reauth');
+  const reauthPassword = document.getElementById('reauth-password');
+  const reauthCode = document.getElementById('reauth-code');
+  let finishReauth = null;
+  function requestReauth(disable = false) {
+    if (finishReauth) return Promise.resolve(null);
+    reauthForm.reset();
+    document.getElementById('reauth-title').textContent = disable ? '关闭两步验证' : '设置两步验证';
+    document.getElementById('reauth-code-field').hidden = !disable;
+    document.getElementById('reauth-code-field').style.display = disable ? 'grid' : 'none';
+    reauthCode.required = disable;
+    return new Promise(resolve => { finishReauth = resolve; reauthDialog.showModal(); });
+  }
+  reauthForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const finish = finishReauth;
+    finishReauth = null;
+    const credentials = { password: reauthPassword.value, code: reauthCode.value.trim() };
+    reauthDialog.close();
+    reauthForm.reset();
+    finish?.(credentials);
+  });
+  reauthDialog.addEventListener('close', () => {
+    reauthForm.reset();
+    if (finishReauth) { const finish = finishReauth; finishReauth = null; finish(null); }
+  });
 
   btnEnableTotp.addEventListener('click', async () => {
+    const credentials = await requestReauth();
+    if (!credentials) return;
     try {
-      const res = await fetch('/api/auth/totp/setup', {method:'POST'});
+      const res = await fetch('/api/auth/totp/setup', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(credentials)});
       const data = await res.json();
       if (!res.ok || !data.ok) {
         showToast(data.error || '获取两步验证密钥失败', 'error');
@@ -361,14 +390,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   btnDisableTotp.addEventListener('click', async () => {
-    const password = prompt('请输入当前管理员登录密码以确认关闭两步验证：');
-    if (!password) return;
+    const credentials = await requestReauth(true);
+    if (!credentials) return;
 
     try {
       const res = await fetch('/api/auth/totp/disable', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password })
+        body: JSON.stringify(credentials)
       });
       const data = await res.json();
       if (res.ok && data.ok) {

@@ -260,6 +260,7 @@ function getTotpCode(secret, timeStep = 30, time = Date.now()) {
 function verifyTotp(token, secret) {
   if (!token || !secret) return false;
   const cleanToken = String(token).trim();
+  if (!/^\d{6}$/.test(cleanToken)) return false;
   const now = Date.now();
   // Check current window and +/- 1 window (for clock drift)
   for (const delta of [-30000, 0, 30000]) {

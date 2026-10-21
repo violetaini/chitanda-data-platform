@@ -40,7 +40,7 @@ test('real SSO and controller: PKCE, exact callbacks, subject authorization, CSR
   assert.equal((await request(issuer,'/api/auth/profile',{method:'POST',headers:{Cookie:ssoCookie,'Content-Type':'application/json',Origin:'https://evil.example'},body:{}})).status,403);
   assert.equal((await request(issuer,'/api/auth/profile',{method:'POST',headers:{Cookie:ssoCookie,'Content-Type':'application/json'},body:{}})).status,403);
   assert.equal((await request(issuer,'/api/auth/totp/setup',{headers:{Cookie:ssoCookie}})).status,404,'GET cannot rotate MFA seed');
-  const setup=await request(issuer,'/api/auth/totp/setup',{method:'POST',headers:{Cookie:ssoCookie,Origin:issuer}});assert.equal(setup.status,200);assert.match(setup.json.qrSvg,/<svg/);assert.ok(!setup.json.qrSvg.includes('qrserver.com'));
+  const setup=await request(issuer,'/api/auth/totp/setup',{method:'POST',headers:{Cookie:ssoCookie,Origin:issuer,'Content-Type':'application/json'},body:{password}});assert.equal(setup.status,200);assert.match(setup.json.qrSvg,/<svg/);assert.ok(!setup.json.qrSvg.includes('qrserver.com'));
   for(const url of ['javascript:alert(1)','data:text/html,attack','https://user:secret@example.com'])assert.equal((await request(issuer,'/api/apps',{method:'POST',headers:{Cookie:ssoCookie,Origin:issuer,'Content-Type':'application/json'},body:{name:'invalid',url}})).status,400);
   const {chromium}=require('playwright'),browser=await chromium.launch({headless:true});
   try{

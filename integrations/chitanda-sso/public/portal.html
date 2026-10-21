@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" href="/favicon.png">
   <link rel="stylesheet" href="/theme.css?v=20261021_fixgap">
   <link rel="stylesheet" href="/style.css?v=20261021_fixgap">
-  <script src="/portal.js?v=20261021_fixgap" defer></script>
+  <script src="/portal.js?v=20261021_security" defer></script>
 </head>
 <body>
 <div class="shell">
@@ -477,6 +477,26 @@
 </div>
 
 <!-- Dialog: Setup TOTP -->
+<dialog id="dialog-reauth">
+  <div class="dialog-heading">
+    <h2 id="reauth-title">确认身份</h2>
+    <button class="icon-button close-dialog" type="button" aria-label="关闭">&times;</button>
+  </div>
+  <form id="form-reauth">
+    <label>当前登录密码
+      <input id="reauth-password" type="password" autocomplete="current-password" required maxlength="4096">
+    </label>
+    <label id="reauth-code-field" hidden>动态验证码
+      <input id="reauth-code" type="text" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="认证器中的6位验证码">
+    </label>
+    <p>两步验证更新后，其他设备需重新登录。</p>
+    <div class="dialog-actions">
+      <button type="button" class="button secondary close-dialog">取消</button>
+      <button type="submit" class="button primary">确认继续</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="dialog-totp">
   <div class="dialog-heading">
     <h2>设置两步动态验证</h2>
