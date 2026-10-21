@@ -4,6 +4,7 @@ const icon=(name)=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 const fillIcons=(root=document)=>root.querySelectorAll('[data-icon]').forEach(e=>e.innerHTML=icon(e.dataset.icon));fillIcons();
 const displayCopy=s=>String(s).replace(/传输/g,'数据').replace(/连接/g,'服务状态').replace(/优化中转/g,'优化机');
 const $=s=>document.querySelector(s),esc=s=>displayCopy(String(s??'')).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ssoMode=document.querySelector('meta[name=auth-mode]')?.content==='sso';
 let csrf='',data=null,view='overview',refreshing=false,toastTimer;
 const views={settings:['系统设置','SYSTEM SETTINGS','管理测活策略、证书与系统偏好。'],account:['个人设置','YOUR PROFILE','管理你的头像、用户名与登录密码。'],overview:['中台概览','PLATFORM OVERVIEW','每一条线路，清晰可见。'],nodes:['节点管理','YOUR ENDPOINTS','管理国内、国际入口与优化机，按实际路径自由组合。'],tunnels:['数据通道','TUNNELS & ROUTES','创建单双向隧道，管理业务域名与地区入口。'],activity:['操作记录','WORKSPACE ACTIVITY','查看配置变更与节点接入记录。'],guide:['使用指南','QUICK START','从节点登记到配置管理，清晰有序。']};
 const bytes=n=>{n=Number(n)||0;for(const u of ['B','KB','MB','GB','TB']){if(n<1024||u==='TB')return `${n<10?n.toFixed(1):Math.round(n)} ${u}`;n/=1024;}};
@@ -15,5 +16,5 @@ const routeRelays=r=>r.relayIds?.length?r.relayIds:[r.relayId];
 const routeNodes=r=>[r.source,...routeRelays(r),r.target].filter((id,i,a)=>i===0||id!==a[i-1]);
 const nodeName=id=>[...data.nodes,...data.relays].find(n=>n.id===id)?.name||id;
 function toast(msg,error=false){const e=$('#toast');e.textContent=displayCopy(msg);e.className='toast'+(error?' error':'');e.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>e.hidden=true,4500);}
-async function api(p,options={}){const r=await fetch('/tunnel/api/'+p,{...options,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf,...options.headers},cache:'no-store'});const b=await r.json();if(r.status===401){showLogin();throw Error(b.error||'请登录');}if(!r.ok)throw Object.assign(Error(b.error||'请求失败'),{status:r.status,retryAfter:b.retryAfter||Number(r.headers.get('Retry-After'))||0});return b;}
-function showLogin(){$('#content').replaceChildren();$('#shell').hidden=true;$('#login').hidden=false;for(const d of document.querySelectorAll('dialog[open]'))d.close();csrf='';data=null;}
+async function api(p,options={}){const r=await fetch('/tunnel/api/'+p,{...options,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf,...options.headers},cache:'no-store'});const b=await r.json();if(r.status===401){showLogin();throw Object.assign(Error(b.error||'请登录'),{status:401});}if(!r.ok)throw Object.assign(Error(b.error||'请求失败'),{status:r.status,retryAfter:b.retryAfter||Number(r.headers.get('Retry-After'))||0});return b;}
+function showLogin(){$('#login-form').hidden=ssoMode;$('#sso-login').hidden=!ssoMode;$('#content').replaceChildren();$('#shell').hidden=true;$('#login').hidden=false;for(const d of document.querySelectorAll('dialog[open]'))d.close();csrf='';data=null;}

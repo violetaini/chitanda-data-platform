@@ -5,9 +5,13 @@ const carrierNodes=()=>endpointCarriers.all(state);
 const ensureCarrierCertificates=()=>endpointCarriers.certificates(state,ensureCertificate);
 const VERSION=require('./package.json').version,sanitizeTLS=require('./telemetry.cjs'),certificates=require('./certificates.cjs');
 const ROOT=__dirname,BASE='/tunnel',PORT=Number(process.env.CT_PORT||5092),DATA=process.env.CT_DATA||'/var/lib/chitanda-tunnel';
-const DEFAULT_SNI='control.chitanda.net',ALLOWED_IPS=new Set((process.env.CT_ALLOWED_IPS||'123.119.187.76,127.0.0.1,::1').split(',').map(s=>s.trim()));
+const DEFAULT_SNI='control.chitanda.net';
 fs.mkdirSync(DATA,{recursive:true,mode:0o700});
 const account=require('./account.cjs')(DATA);
+const sso=require('./sso.cjs')();
+const sourceAccess=require('./source-access.cjs')();
+const sessionCookie=token=>`ct_session=${token}; HttpOnly; SameSite=Strict; Path=/tunnel/; Max-Age=${token?43200:0}${process.env.CT_INSECURE==='1'?'':'; Secure'}`;
+const profileFor=session=>({...account.profile(),...(sso.enabled?sso.profile(session):{})});
 const defense=require('./login-defense.cjs')(DATA);
 const requestGuard=require('./request-guard.cjs')();
 const managementKeys=require('./management-keys.cjs')(DATA),managementAPI=require('./management-api.cjs');
@@ -22,7 +26,7 @@ const audit=(action,detail)=>{const actor=requestContext.getStore()?.principal;s
 const equal=(a,b)=>{a=Buffer.from(String(a||''));b=Buffer.from(String(b||''));return a.length===b.length&&crypto.timingSafeEqual(a,b);};
 const fail=(message,status=400)=>{throw Object.assign(Error(message),{status});};
 const json=(res,status,data,extra={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...extra});res.end(JSON.stringify(data));};
-const body=async (req,limit=131072)=>{if(Number(req.headers['content-length'])>limit)fail('请求体过大',413);let chunks=[],size=0;for await(const chunk of req){size+=chunk.length;if(size>limit)fail('请求体过大',413);chunks.push(chunk);}let value;try{value=JSON.parse(Buffer.concat(chunks).toString()||'{}');}catch{fail('JSON 格式不正确');}if(!value||typeof value!=='object'||Array.isArray(value))fail('请求数据应为 JSON 对象');if(req.managementPrincipal&&!managementKeys.active(req.managementPrincipal))fail('API 密钥已过期或已撤销',401);if(req.authorizationActive&&!req.authorizationActive())fail('认证已失效，请重新接入或登录',401);return value;};
+const body=async (req,limit=131072)=>{if(Number(req.headers['content-length'])>limit)fail('请求体过大',413);let chunks=[],size=0;for await(const chunk of req){size+=chunk.length;if(size>limit)fail('请求体过大',413);chunks.push(chunk);}let value;try{value=JSON.parse(Buffer.concat(chunks).toString()||'{}');}catch{fail('JSON 格式不正确');}if(!value||typeof value!=='object'||Array.isArray(value))fail('请求数据应为 JSON 对象');if(req.managementPrincipal&&!managementKeys.active(req.managementPrincipal))fail('API 密钥已过期或已撤销',401);if(req.ssoSession)await sso.validate(req.ssoSession,true);if(req.authorizationActive&&!req.authorizationActive())fail('认证已失效，请重新接入或登录',401);return value;};
 function authenticateNode(req,res,clientIP){
  const id=req.headers['x-node-id'],token=String(req.headers.authorization||'').replace(/^Bearer /,''),current=()=>[...state.relays,...state.nodes].find(n=>n.id===id&&equal(token,n.token));
  const node=current();if(!node){requestGuard.take('node-failure:'+clientIP,30);fail('节点认证失败',401);}
@@ -131,15 +135,32 @@ function enrollment(n,relay){return {controller:process.env.CT_CONTROLLER_URL||'
 const server=http.createServer((req,res)=>requestContext.run({},async()=>{try{
  for(const [k,v]of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"}))res.setHeader(k,v);
  let p=new URL(req.url,'http://localhost').pathname;const clientIP=String(req.headers['x-real-ip']||req.socket.remoteAddress||'').replace(/^::ffff:/,'');
- if(p.startsWith(BASE)&&!ALLOWED_IPS.has(clientIP))return json(res,403,{error:'访问被拒绝'});
+ if(p.startsWith(BASE)&&!sourceAccess.permits(clientIP))return json(res,403,{error:'访问被拒绝'});
  if(p.startsWith(BASE+'/api/'))requestGuard.begin(req,res,'panel:'+clientIP);
  if(p.startsWith('/transit-node/')&&p!=='/transit-node/install.sh')requestGuard.begin(req,res,'node-ip:'+clientIP,{limit:1200,concurrent:32});
  if(p===BASE+'/api/management-openapi'&&req.method==='GET'&&String(req.headers.accept||'').includes('text/html')&&new URL(req.url,'http://localhost').searchParams.get('format')!=='json'){
   res.writeHead(302,{'Location':BASE+'/api-docs','Cache-Control':'no-store'});return res.end();
  }
+ if(p===BASE+'/sso/start'&&req.method==='GET'){
+  if(!sso.enabled)return json(res,404,{error:'统一登录尚未启用'});
+  requestGuard.begin(req,res,'sso:'+clientIP,{limit:12,concurrent:2});
+  const flow=sso.start(req,clientIP);res.writeHead(302,{'Location':flow.location,'Set-Cookie':flow.cookie,'Cache-Control':'no-store'});return res.end();
+ }
+ if(p===BASE+'/sso/callback'&&req.method==='GET'){
+  if(!sso.enabled)return json(res,404,{error:'统一登录尚未启用'});
+  requestGuard.begin(req,res,'sso:'+clientIP,{limit:12,concurrent:2});
+  try{
+   const completed=await sso.complete(req,new URL(req.url,'http://localhost'),clientIP),token=secret();
+   if(sessions.size>=32)sessions.delete(sessions.keys().next().value);
+   sessions.set(token,{...completed.session,csrf:secret(),clientIP});
+   res.writeHead(302,{'Location':BASE+'/','Set-Cookie':[sessionCookie(token),completed.cookie],'Cache-Control':'no-store'});return res.end();
+  }catch(e){console.error('SSO callback rejected:',e.status||500);res.writeHead(302,{'Location':BASE+'/?sso_error=1','Set-Cookie':sso.clearFlow(),'Cache-Control':'no-store'});return res.end();}
+ }
+ if(p===BASE+'/api/auth-config'&&req.method==='GET')return json(res,200,{mode:sso.enabled?'sso':'local',...(sso.enabled?{loginUrl:sso.loginUrl,accountUrl:sso.accountUrl}:{})});
  if(p===BASE+'/api-docs'){
   const token=String(req.headers.cookie||'').match(/(?:^|;\s*)ct_session=([a-f0-9]{64})(?:;|$)/)?.[1],s=sessions.get(token);
-  if(!s||s.until<Date.now()||s.clientIP!==clientIP){res.writeHead(302,{'Location':BASE+'/','Cache-Control':'no-store'});return res.end();}
+  if(sso.enabled&&s)try{await sso.validate(s);}catch{sessions.delete(token);}
+  if(!s||sessions.get(token)!==s||s.until<Date.now()||s.clientIP!==clientIP){res.writeHead(302,{'Location':BASE+'/','Cache-Control':'no-store'});return res.end();}
  }
  if(p.startsWith(BASE+'/api/v1/')){
   const requested=p.slice((BASE+'/api/v1').length),route=managementAPI.match(requested,req.method),principal=managementKeys.authorize(req,route?.scope,clientIP);
@@ -196,6 +217,7 @@ const server=http.createServer((req,res)=>requestContext.run({},async()=>{try{
   return json(res,200,agentConfig(id));
  }
  if(p===BASE+'/api/login'&&req.method==='POST'){
+  if(sso.enabled)return json(res,410,{error:'请使用 Chitanda 统一登录'});
   const ticket=defense.begin(clientIP);
   try{
    const b=await body(req,32768);if(!account.profile().username)return json(res,503,{error:'管理员账号尚未配置'});
@@ -207,20 +229,22 @@ const server=http.createServer((req,res)=>requestContext.run({},async()=>{try{
  }
  if(p.startsWith(BASE+'/api/')){
   const token=String(req.headers.cookie||'').match(/(?:^|;\s*)ct_session=([a-f0-9]{64})(?:;|$)/)?.[1],s=sessions.get(token);if(!req.managementPrincipal&&(!s||s.until<Date.now()||s.clientIP!==clientIP))return json(res,401,{error:'请登录管理面板'});if(!req.managementPrincipal&&!['GET','HEAD'].includes(req.method)&&!equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求校验失败，请刷新页面'});
+  if(!req.managementPrincipal&&sso.enabled){try{await sso.validate(s,!['GET','HEAD'].includes(req.method));}catch(e){if(e.status!==503)sessions.delete(token);throw e;}req.ssoSession=s;}
   if(!req.managementPrincipal){req.authorizationActive=()=>sessions.get(token)===s&&s.until>Date.now()&&s.clientIP===clientIP;if(!['GET','HEAD'].includes(req.method))requestGuard.begin(req,res,'session-write:'+token,{limit:60,concurrent:4});}
   if(!['GET','HEAD'].includes(req.method)&&String(req.headers['content-type']||'').split(';')[0].trim().toLowerCase()!=='application/json')return json(res,415,{error:'请使用 JSON 格式请求'});
-  if(p===BASE+'/api/session'&&req.method==='GET')return json(res,200,{...account.profile(),csrf:s.csrf});
-  if(p===BASE+'/api/logout'&&req.method==='POST'){sessions.delete(token);return json(res,200,{ok:true},{'Set-Cookie':'ct_session=; Path=/tunnel/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'});}
-  if(p===BASE+'/api/profile'&&req.method==='GET')return json(res,200,account.profile());
+  if(p===BASE+'/api/session'&&req.method==='GET')return json(res,200,{...profileFor(s),csrf:s.csrf});
+  if(p===BASE+'/api/logout'&&req.method==='POST'){sessions.delete(token);return json(res,200,{ok:true,...(sso.enabled?{logoutUrl:sso.logoutUrl()}:{})},{'Set-Cookie':sessionCookie('')});}
+  if(p===BASE+'/api/profile'&&req.method==='GET')return json(res,200,profileFor(s));
   if(p===BASE+'/api/avatar'&&req.method==='GET'){const image=account.avatar();if(!image)return json(res,404,{error:'尚未设置头像'});res.writeHead(200,{'Content-Type':'image/webp','Cache-Control':'no-store'});return res.end(image);}
-  if(p===BASE+'/api/avatar'&&req.method==='PUT'){requestGuard.begin(req,res,'avatar-process',{limit:120,concurrent:1});return json(res,200,await account.setAvatar(await body(req,2900000),()=>sessions.get(token)===s&&s.until>Date.now()));}
-  if(p===BASE+'/api/security'&&req.method==='GET')return json(res,200,{...defense.snapshot(),allowedIPs:[...ALLOWED_IPS],sessionLimit:32});
+  if(p===BASE+'/api/avatar'&&req.method==='PUT'){requestGuard.begin(req,res,'avatar-process',{limit:120,concurrent:1});const result=await account.setAvatar(await body(req,2900000),()=>sessions.get(token)===s&&s.until>Date.now());return json(res,200,{...result,...profileFor(s)});}
+  if(p===BASE+'/api/security'&&req.method==='GET')return json(res,200,{...defense.snapshot(),authMode:sso.enabled?'sso':'local',allowedIPs:sourceAccess.summary().allowedIPs,sourceAccess:sourceAccess.summary(),sessionLimit:32});
   if(p===BASE+'/api/account'&&req.method==='PATCH'){
+   if(sso.enabled)return json(res,410,{error:'请在统一账号中心管理用户名与密码'});
    const ticket=defense.begin(clientIP,'account');
    try{const result=await account.credentials(await body(req),()=>sessions.get(token)===s&&s.until>Date.now());defense.success(ticket);sessions.clear();audit('更新管理员账号','管理员账密已更新');return json(res,200,result,{'Set-Cookie':'ct_session=; Path=/tunnel/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'});}
    catch(e){if(e.code==='BAD_CURRENT_PASSWORD')defense.failure(ticket);throw e;}finally{defense.finish(ticket);}
   }
-  if(p===BASE+'/api/management-keys'&&req.method==='GET')return json(res,200,{...managementKeys.list(),allowedIPs:[...ALLOWED_IPS]});
+  if(p===BASE+'/api/management-keys'&&req.method==='GET')return json(res,200,{...managementKeys.list(),allowedIPs:sourceAccess.summary().allowedIPs,sourceAccess:sourceAccess.summary()});
   if(p===BASE+'/api/management-keys'&&req.method==='POST'){const result=managementKeys.create(await body(req));audit('创建管理 API 密钥',result.key.name+' · '+result.key.scopes.join(', '));return json(res,201,result);}
   const managementKeyMatch=p.match(/^\/tunnel\/api\/management-keys\/([a-f0-9]{16})$/);
   if(managementKeyMatch&&req.method==='DELETE'){if(Object.keys(await body(req)).length)fail('撤销密钥不接受额外参数');const k=managementKeys.revoke(managementKeyMatch[1]);audit('撤销管理 API 密钥',k.name);return json(res,200,{ok:true});}
@@ -278,7 +302,7 @@ const server=http.createServer((req,res)=>requestContext.run({},async()=>{try{
  }
  if(req.method!=='GET'&&req.method!=='HEAD')return json(res,405,{error:'不支持该方法'});
  const file=({[BASE]:'index.html',[BASE+'/']:'index.html',[BASE+'/api-docs']:'api-docs.html',[BASE+'/api-docs.js']:'api-docs.js',[BASE+'/api-docs.css']:'api-docs.css',[BASE+'/app.js']:'app.js',[BASE+'/ui.js']:'ui.js',[BASE+'/onboarding.js']:'onboarding.js',[BASE+'/http-access.js']:'http-access.js',[BASE+'/graph-model.js']:'graph-model.js',[BASE+'/dashboard.js']:'dashboard.js',[BASE+'/style.css']:'style.css',[BASE+'/theme.css']:'theme.css',[BASE+'/account.js']:'account.js',[BASE+'/certificate-profiles.js']:'certificate-profiles.js',[BASE+'/settings.js']:'settings.js',[BASE+'/domains.js']:'domains.js',[BASE+'/security.js']:'security.js',[BASE+'/management-api.js']:'management-api.js',[BASE+'/favicon.ico']:'favicon.ico',[BASE+'/favicon.png']:'favicon.png',[BASE+'/brand-logo.webp']:'brand-logo.webp'})[p];if(!file)return json(res,404,{error:'页面不存在'});
- res.writeHead(200,{'Content-Type':({'.html':'text/html','.js':'text/javascript','.css':'text/css','.ico':'image/x-icon','.png':'image/png','.webp':'image/webp'})[path.extname(file)]+(/\.(html|js|css)$/.test(file)?'; charset=utf-8':''),'Cache-Control':'no-store'});if(req.method==='HEAD')return res.end();if(path.extname(file)==='.html')return res.end(fs.readFileSync(path.join(ROOT,'public',file),'utf8').replaceAll('__BUILD_VERSION__',VERSION));fs.createReadStream(path.join(ROOT,'public',file)).pipe(res);
+ res.writeHead(200,{'Content-Type':({'.html':'text/html','.js':'text/javascript','.css':'text/css','.ico':'image/x-icon','.png':'image/png','.webp':'image/webp'})[path.extname(file)]+(/\.(html|js|css)$/.test(file)?'; charset=utf-8':''),'Cache-Control':'no-store'});if(req.method==='HEAD')return res.end();if(path.extname(file)==='.html')return res.end(fs.readFileSync(path.join(ROOT,'public',file),'utf8').replaceAll('__BUILD_VERSION__',VERSION).replaceAll('__AUTH_MODE__',sso.enabled?'sso':'local'));fs.createReadStream(path.join(ROOT,'public',file)).pipe(res);
  }catch(e){if(!e.status||e.status>=500)console.error('request failed:',e.status?e.message:'internal error');if(!res.headersSent)json(res,e.status||500,{error:e.status?e.message:'服务暂时不可用',...(e.retryAfter?{retryAfter:e.retryAfter}:{})},e.retryAfter?{'Retry-After':String(e.retryAfter)}:{});else res.destroy();}}));
 setInterval(()=>{for(const [k,v]of sessions)if(v.until<Date.now())sessions.delete(k);},600000).unref();
 server.requestTimeout=15000;server.headersTimeout=10000;server.maxRequestsPerSocket=100;server.listen(PORT,'127.0.0.1',()=>console.log('Chitanda · 数据中台管理 v2 listening on 127.0.0.1:'+PORT));

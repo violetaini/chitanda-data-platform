@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f4ee">
+  <title>Chitanda · 统一身份认证</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="/favicon.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/favicon.png">
+  <link rel="stylesheet" href="/theme.css?v=20261021_font">
+  <link rel="stylesheet" href="/style.css?v=20261021_font">
+  <script src="/sso-app.js?v=20261021_font" defer></script>
+</head>
+<body>
+<div class="login-screen">
+  <!-- Left Art Panel -->
+  <div class="login-art">
+    <a class="brand" href="/">
+      <img class="brand-mark brand-image" src="/favicon.png" width="40" height="40" alt="Chitanda">
+      <span>CHITANDA<span class="brand-sub">UNIFIED IDENTITY</span></span>
+    </a>
+    <div class="login-orbit">
+      <div class="orbit orbit-one"></div>
+      <div class="orbit orbit-two"></div>
+      <div class="orbit orbit-three"></div>
+      <span class="orbit-point p1"></span>
+      <span class="orbit-point p2"></span>
+      <span class="orbit-point p3"></span>
+      <div class="orbit-core">
+        <img src="/brand-logo.webp" class="project-logo" alt="冰菓">
+      </div>
+    </div>
+    <div class="login-copy">
+      <span class="eyebrow">A PLACE FOR YOUR IDENTITY</span>
+      <h1>一处认证。<br>全域通行。</h1>
+      <p>为全站服务提供统一接入、跨域漫游与单点登录。</p>
+    </div>
+    <span class="art-foot">CHITANDA UNIFIED SSO · EST. 2026</span>
+  </div>
+
+  <!-- Right Form Panel -->
+  <div class="login-form-wrap">
+    <div class="login-form-inner">
+      <span class="section-kicker">IDENTITY CENTER</span>
+      <h2 id="login-title">欢迎回来</h2>
+      <p id="login-subtitle" class="subtitle">登录 Chitanda 统一身份中心</p>
+
+      <!-- Client Context Banner (if OAuth redirected) -->
+      <div id="oauth-banner" class="oauth-client-banner" style="display: none;">
+        <span style="font-size: 24px;">🔗</span>
+        <div>
+          <strong id="oauth-client-name">第三方应用</strong>
+          <small>将请求使用你的 Chitanda 身份登录</small>
+        </div>
+      </div>
+
+      <form id="login-form">
+        <label>
+          管理员账号
+          <input name="username" id="input-username" autocomplete="username" required placeholder="输入管理员账号" maxlength="128">
+        </label>
+        <label>
+          登录密码
+          <input name="password" id="input-password" type="password" autocomplete="current-password" required placeholder="输入登录密码" maxlength="4096">
+        </label>
+
+        <!-- Dynamic TOTP Code Field (appears if 2FA required) -->
+        <div id="totp-field" style="display: none;">
+          <label>
+            两步验证动态口令
+            <small>请输入手机 Authenticator 中的 6 位数字</small>
+            <input name="totp_code" id="input-totp" type="text" inputmode="numeric" pattern="[0-9]{6}" placeholder="例如：123456" maxlength="6">
+          </label>
+        </div>
+
+        <p id="login-error" role="alert" class="form-error" style="display: none;"></p>
+
+        <button id="login-btn" class="button primary login-submit" type="submit">
+          <span>进入身份门户</span>
+          <span>&rarr;</span>
+        </button>
+      </form>
+
+      <div class="login-note">
+        <span>🛡️</span>
+        <span>统一加密 · 根域漫游 · 多因素防护</span>
+      </div>
+    </div>
+
+    <div class="login-foot">
+      <span>CHITANDA SSO</span>
+      <span>PRIVATE IDENTITY HUB</span>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" style="display: none;"></div>
+</body>
+</html>
