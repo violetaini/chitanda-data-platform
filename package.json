@@ -1,6 +1,6 @@
 {
   "name": "chitanda-data-platform-workspace",
-  "version": "2.20.5",
+  "version": "2.21.0",
   "private": true,
   "description": "Chitanda 数据中台管理：控制面板、轻量节点及 HTTPS 数据接入",
   "engines": {
@@ -11,9 +11,9 @@
   ],
   "scripts": {
     "start": "node --env-file-if-exists=.env.local deploy/tunnel-control/server.cjs",
-    "test": "node --test scripts/tunnel-control-security.test.cjs scripts/route-tests.test.cjs scripts/domains.test.cjs scripts/dns-address-sync.test.cjs scripts/node-installations.test.cjs scripts/tunnels.test.cjs scripts/ports.test.cjs scripts/tunnel-tokens.test.cjs scripts/http-access.test.cjs scripts/certificate-profiles.test.cjs scripts/acme.test.cjs scripts/certificate-distribution.test.cjs",
+    "test": "node --test scripts/tunnel-control-security.test.cjs scripts/route-tests.test.cjs scripts/domains.test.cjs scripts/dns-address-sync.test.cjs scripts/node-installations.test.cjs scripts/tunnels.test.cjs scripts/ports.test.cjs scripts/tunnel-tokens.test.cjs scripts/http-access.test.cjs scripts/certificate-profiles.test.cjs scripts/acme.test.cjs scripts/certificate-distribution.test.cjs scripts/management-api.test.cjs",
     "test:gateway": "go -C deploy/tunnel-control/gateway test ./...",
-    "test:ui": "node scripts/tunnel-control-account-smoke.cjs && node scripts/tunnel-control-dashboard-smoke.cjs && node scripts/tunnel-control-node-cards-smoke.cjs && node scripts/tunnel-control-route-test-smoke.cjs && node scripts/tunnel-control-settings-smoke.cjs && node scripts/tunnel-model-smoke.cjs && node scripts/node-onboarding-smoke.cjs",
+    "test:ui": "node scripts/tunnel-control-account-smoke.cjs && node scripts/tunnel-control-dashboard-smoke.cjs && node scripts/tunnel-control-node-cards-smoke.cjs && node scripts/tunnel-control-route-test-smoke.cjs && node scripts/tunnel-control-settings-smoke.cjs && node scripts/management-api-smoke.cjs && node scripts/tunnel-model-smoke.cjs && node scripts/node-onboarding-smoke.cjs",
     "build:engine": "powershell -NoProfile -File deploy/tunnel-control/build-engine.ps1",
     "build:node-release": "powershell -NoProfile -File deploy/tunnel-control/build-node-release.ps1",
     "sync:installer": "python scripts/sync-node-installer.py"

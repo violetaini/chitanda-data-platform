@@ -29,6 +29,8 @@ module.exports=function({getState,validateRoute,ensureCertificates,audit}){
  const bound=t=>(getState().domains||[]).some(b=>b.tunnelId===t.id||t.routeIds.some(id=>[b.mainlandRouteId,b.internationalRouteId].includes(id)));
  function write(input,id){
   const s=getState(),old=id?get(id):null,mode=input.mode||old?.mode||'single',name=String(input.name||old?.name||'').trim();
+  if(input.enabled!==undefined&&typeof input.enabled!=='boolean')fail('enabled 必须为布尔值');
+  if(old&&Object.keys(input).every(k=>k==='enabled')&&old.routeIds.every(id=>s.routes.find(r=>r.id===id)?.enabled===input.enabled))return old;
   if(!['single','bidirectional'].includes(mode)||!name||name.length>60)fail('请选择隧道类型并填写 1–60 字符的名称');
   if(old&&s.httpAccess?.[old.id]?.enabled&&mode!==old.mode)fail('请先停用 URL 请求接入再改变单双向类型',409);
   if(old&&bound(old)&&mode!==old.mode)fail('已绑定域名的隧道不能直接改变单双向类型',409);

@@ -34,3 +34,6 @@ deploy/tunnel-control/releases/
 
 __pycache__/
 *.pyc
+
+management-keys.json
+management-keys.json.tmp

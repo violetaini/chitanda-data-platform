@@ -9,18 +9,20 @@ const DEFAULT_SNI='control.chitanda.net',ALLOWED_IPS=new Set((process.env.CT_ALL
 fs.mkdirSync(DATA,{recursive:true,mode:0o700});
 const account=require('./account.cjs')(DATA);
 const defense=require('./login-defense.cjs')(DATA);
+const managementKeys=require('./management-keys.cjs')(DATA),managementAPI=require('./management-api.cjs');
 const stateFile=path.join(DATA,'state.json'),secret=()=>crypto.randomBytes(32).toString('hex'),newId=p=>p+'-'+crypto.randomBytes(6).toString('hex');
 let state=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):{version:1,relays:[{id:'relay-hk',name:'香港优化机',host:'47.243.148.109',port:443,serverName:DEFAULT_SNI,path:'/api/v1/chitanda-bridge',psk:crypto.randomBytes(32).toString('base64'),token:secret()}],nodes:[{id:'mainland',name:'中国大陆',host:'110.42.32.161',role:'国内接入',token:secret()},{id:'international',name:'国际业务节点',host:'23.145.248.44',role:'国际接入',token:secret()}],routes:[],events:[]};
 const reports=new Map(),history=new Map(),sessions=new Map();
+const requestContext=new(require('node:async_hooks').AsyncLocalStorage)();
 const systemSettings=require('./settings.cjs');state.settings=systemSettings.read(state.settings);
 let deferSave=false;
 const save=()=>{if(deferSave)return;fs.writeFileSync(stateFile+'.tmp',JSON.stringify(state,null,2),{mode:0o600});fs.renameSync(stateFile+'.tmp',stateFile);};
-const audit=(action,detail)=>{state.events.unshift({id:crypto.randomUUID(),at:new Date().toISOString(),action,detail});state.events=state.events.slice(0,150);save();};
+const audit=(action,detail)=>{const actor=requestContext.getStore()?.principal;state.events.unshift({id:crypto.randomUUID(),at:new Date().toISOString(),action,detail,...(actor?{actor:{type:'api-key',id:actor.id,name:actor.name}}:{})});state.events=state.events.slice(0,150);save();};
 const equal=(a,b)=>{a=Buffer.from(String(a||''));b=Buffer.from(String(b||''));return a.length===b.length&&crypto.timingSafeEqual(a,b);};
 const fail=(message,status=400)=>{throw Object.assign(Error(message),{status});};
 const json=(res,status,data,extra={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...extra});res.end(JSON.stringify(data));};
-const body=async (req,limit=131072)=>{let chunks=[],size=0;for await(const chunk of req){size+=chunk.length;if(size>limit)fail('请求体过大',413);chunks.push(chunk);}let value;try{value=JSON.parse(Buffer.concat(chunks).toString()||'{}');}catch{fail('JSON 格式不正确');}if(!value||typeof value!=='object'||Array.isArray(value))fail('请求数据应为 JSON 对象');return value;};
-const publicIP=ip=>net.isIP(ip)&&!['127.0.0.1','::1'].includes(ip)&&!/^10\.|^192\.168\.|^169\.254\.|^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+const body=async (req,limit=131072)=>{let chunks=[],size=0;for await(const chunk of req){size+=chunk.length;if(size>limit)fail('请求体过大',413);chunks.push(chunk);}let value;try{value=JSON.parse(Buffer.concat(chunks).toString()||'{}');}catch{fail('JSON 格式不正确');}if(!value||typeof value!=='object'||Array.isArray(value))fail('请求数据应为 JSON 对象');if(req.managementPrincipal&&!managementKeys.active(req.managementPrincipal))fail('API 密钥已过期或已撤销',401);return value;};
+const publicIP=require('./public-address.cjs');
 const domain=v=>{v=String(v||DEFAULT_SNI).trim().toLowerCase();if(v.length>253||!v.includes('.')||!v.split('.').every(s=>/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(s)))fail('SNI 应为有效域名');return v;};
 const pki=path.join(DATA,'pki');fs.mkdirSync(pki,{recursive:true,mode:0o700});
 const openssl=args=>execFileSync(process.env.CT_OPENSSL||'openssl',args,{stdio:'pipe',timeout:15000,windowsHide:true});
@@ -76,6 +78,7 @@ function baseAgentConfig(id){
 }
 function agentConfig(id){const https=state.certificates?.https,node=[...state.nodes,...state.relays].find(n=>n.id===id);return {...baseAgentConfig(id),tunnelAccess:tunnelTokens.grants(state,id),httpsCertificate:certificateProfiles.forNode(id)||(https?.mode==='custom'&&https.nodeIds.includes(id)&&node.ingress&&new crypto.X509Certificate(https.certPEM).checkHost(node.ingress.domain)?{certPEM:https.certPEM,keyPEM:https.keyPEM}:null),checks:routeChecks.pending(id)};}
 function validateRoute(input,id){
+ if(input.enabled!==undefined&&typeof input.enabled!=='boolean')fail('enabled 必须为布尔值');
  const endpoints=[...state.nodes,...state.relays],source=endpoints.find(n=>n.id===input.source),target=endpoints.find(n=>n.id===input.target);
  if(!source||!target||source.id===target.id)fail('请选择不同的起点和终点');
  if(input.relayIds!==undefined&&(!Array.isArray(input.relayIds)||input.relayIds.length>8||input.relayIds.some(id=>typeof id!=='string')))fail('最多选择 8 台优化机');
@@ -118,10 +121,19 @@ async function writeTunnel(input,id){
 }
 function mutateRoute(input,id){const before=structuredClone(state);try{const candidate=validateRoute(input,id),old=state.routes,index=old.findIndex(r=>r.id===id);state.routes=index>=0?old.map((r,i)=>i===index?{...candidate,createdAt:r.createdAt}:r):[...old,candidate];ensureCarrierCertificates();return candidate;}catch(e){state=before;throw e;}}
 function enrollment(n,relay){return {controller:process.env.CT_CONTROLLER_URL||'https://datahub.chitanda.net',controllerAddress:process.env.CT_CONTROLLER_ADDRESS||'',id:n.id,token:n.token,role:relay?'relay':'agent',ca:state.ca};}
-const server=http.createServer(async(req,res)=>{try{
+const server=http.createServer((req,res)=>requestContext.run({},async()=>{try{
  for(const [k,v]of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"}))res.setHeader(k,v);
- const p=new URL(req.url,'http://localhost').pathname,clientIP=String(req.headers['x-real-ip']||req.socket.remoteAddress||'').replace(/^::ffff:/,'');
+ let p=new URL(req.url,'http://localhost').pathname;const clientIP=String(req.headers['x-real-ip']||req.socket.remoteAddress||'').replace(/^::ffff:/,'');
  if(p.startsWith(BASE)&&!ALLOWED_IPS.has(clientIP))return json(res,403,{error:'访问被拒绝'});
+ if(p.startsWith(BASE+'/api/v1/')){
+  const requested=p.slice((BASE+'/api/v1').length),route=managementAPI.match(requested,req.method),principal=managementKeys.authorize(req,route?.scope,clientIP);
+  if(requested==='/openapi.json'&&req.method==='GET')return json(res,200,managementAPI.schema());
+  if(!route)fail('API 路径或请求方法不存在',404);
+  req.managementPrincipal=principal;res.setHeader('X-API-Version','1');
+  if(route.action!=='panel')return json(res,200,managementAPI.view(route,snapshot()));
+  requestContext.getStore().principal=principal;
+  p=BASE+'/api'+route.panel;
+ }
  if(p===BASE&&['GET','HEAD'].includes(req.method)){res.writeHead(302,{'Location':BASE+'/','Cache-Control':'no-store'});return res.end();}
  if(p.startsWith(BASE+'/api/')&&!['GET','HEAD'].includes(req.method)){
   const origin=req.headers.origin,host=String(req.headers.host||'');
@@ -183,7 +195,7 @@ const server=http.createServer(async(req,res)=>{try{
   }finally{defense.finish(ticket);}
  }
  if(p.startsWith(BASE+'/api/')){
-  const token=String(req.headers.cookie||'').match(/(?:^|;\s*)ct_session=([a-f0-9]{64})(?:;|$)/)?.[1],s=sessions.get(token);if(!s||s.until<Date.now()||s.clientIP!==clientIP)return json(res,401,{error:'请登录管理面板'});if(!['GET','HEAD'].includes(req.method)&&!equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求校验失败，请刷新页面'});
+  const token=String(req.headers.cookie||'').match(/(?:^|;\s*)ct_session=([a-f0-9]{64})(?:;|$)/)?.[1],s=sessions.get(token);if(!req.managementPrincipal&&(!s||s.until<Date.now()||s.clientIP!==clientIP))return json(res,401,{error:'请登录管理面板'});if(!req.managementPrincipal&&!['GET','HEAD'].includes(req.method)&&!equal(req.headers['x-csrf-token'],s.csrf))return json(res,403,{error:'请求校验失败，请刷新页面'});
   if(!['GET','HEAD'].includes(req.method)&&!String(req.headers['content-type']||'').toLowerCase().startsWith('application/json'))return json(res,415,{error:'请使用 JSON 格式请求'});
   if(p===BASE+'/api/session'&&req.method==='GET')return json(res,200,{...account.profile(),csrf:s.csrf});
   if(p===BASE+'/api/logout'&&req.method==='POST'){sessions.delete(token);return json(res,200,{ok:true},{'Set-Cookie':'ct_session=; Path=/tunnel/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'});}
@@ -196,6 +208,11 @@ const server=http.createServer(async(req,res)=>{try{
    try{const result=await account.credentials(await body(req),()=>sessions.get(token)===s&&s.until>Date.now());defense.success(ticket);sessions.clear();audit('更新管理员账号','管理员账密已更新');return json(res,200,result,{'Set-Cookie':'ct_session=; Path=/tunnel/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'});}
    catch(e){if(e.code==='BAD_CURRENT_PASSWORD')defense.failure(ticket);throw e;}finally{defense.finish(ticket);}
   }
+  if(p===BASE+'/api/management-keys'&&req.method==='GET')return json(res,200,{...managementKeys.list(),allowedIPs:[...ALLOWED_IPS]});
+  if(p===BASE+'/api/management-keys'&&req.method==='POST'){const result=managementKeys.create(await body(req));audit('创建管理 API 密钥',result.key.name+' · '+result.key.scopes.join(', '));return json(res,201,result);}
+  const managementKeyMatch=p.match(/^\/tunnel\/api\/management-keys\/([a-f0-9]{16})$/);
+  if(managementKeyMatch&&req.method==='DELETE'){if(Object.keys(await body(req)).length)fail('撤销密钥不接受额外参数');const k=managementKeys.revoke(managementKeyMatch[1]);audit('撤销管理 API 密钥',k.name);return json(res,200,{ok:true});}
+  if(p===BASE+'/api/management-openapi'&&req.method==='GET')return json(res,200,managementAPI.schema());
   if(p===BASE+'/api/state'&&req.method==='GET')return json(res,200,snapshot());
   if(p===BASE+'/api/ports/available'&&req.method==='GET'){const u=new URL(req.url,'http://localhost');return json(res,200,portManager.available(u.searchParams.get('nodeId'),{routeId:u.searchParams.get('routeId')||undefined,preferred:Number(u.searchParams.get('preferred')||15081),avoid:u.searchParams.getAll('avoid').map(Number)}));}
   if(domains.isBusy()&&/\/api\/(tunnels|routes|nodes)(\/|$)/.test(p)&&!['GET','HEAD'].includes(req.method))fail('DNS 正在发布，请稍后修改隧道或节点',409);
@@ -231,7 +248,16 @@ const server=http.createServer(async(req,res)=>{try{
   }
   const nodeMatch=p.match(/^\/tunnel\/api\/nodes\/([a-zA-Z0-9-]+)$/);
   if(nodeMatch){const id=nodeMatch[1],relay=state.relays.find(n=>n.id===id),n=relay||state.nodes.find(n=>n.id===id);if(!n)fail('节点不存在',404);
-   if(req.method==='DELETE'){if(state.domains?.some(b=>state.routes.some(r=>routePath.path(r).includes(id)&&[b.mainlandRouteId,b.internationalRouteId].includes(r.id))))fail('请先处理绑定此节点的业务域名',409);const linked=state.routes.filter(r=>routePath.path(r).includes(id)),b=await body(req);if(linked.length&&!b.cascade)return json(res,409,{error:'节点被数据通道引用，请确认一并删除关联数据通道',routes:linked.map(r=>r.name)});state.routes=state.routes.filter(r=>!linked.includes(r));state.nodes=state.nodes.filter(x=>x.id!==id);state.relays=state.relays.filter(x=>x.id!==id);reports.delete(id);history.delete(id);state.version++;audit('删除节点',n.name+' · 撤销凭据并删除 '+linked.length+' 条关联数据通道');return json(res,200,{ok:true,deletedRoutes:linked.length});}
+   if(req.method==='DELETE'){
+    const b=await body(req);if(Object.keys(b).some(k=>k!=='cascade')||b.cascade!==undefined&&typeof b.cascade!=='boolean')fail('cascade 必须为布尔值');
+    const linked=state.routes.filter(r=>routePath.path(r).includes(id)),linkedIds=new Set(linked.map(r=>r.id)),affected=state.tunnels.filter(t=>t.routeIds.some(r=>linkedIds.has(r))),affectedIds=new Set(affected.map(t=>t.id));
+    if(state.domains?.some(b=>affectedIds.has(b.tunnelId)||[b.mainlandRouteId,b.internationalRouteId].some(r=>linkedIds.has(r))))fail('请先处理绑定此节点的业务域名',409);
+    if(linked.length&&!b.cascade)return json(res,409,{error:'节点被数据通道引用，请确认一并删除关联数据通道',routes:linked.map(r=>r.name)});
+    if(linked.length&&req.managementPrincipal&&!req.managementPrincipal.scopes.includes('tunnels:write'))fail('级联删除还需要 tunnels:write 权限',403);
+    const removedIds=new Set([...linkedIds,...affected.flatMap(t=>t.routeIds)]),deletedRoutes=state.routes.filter(r=>removedIds.has(r.id)).length;
+    state.routes=state.routes.filter(r=>!removedIds.has(r.id));state.tunnels=state.tunnels.filter(t=>!affectedIds.has(t.id));tunnelModel.normalize(state);
+    state.nodes=state.nodes.filter(x=>x.id!==id);state.relays=state.relays.filter(x=>x.id!==id);reports.delete(id);history.delete(id);state.version++;audit('删除节点',n.name+' · 撤销凭据并删除 '+deletedRoutes+' 条关联数据通道');return json(res,200,{ok:true,deletedRoutes});
+   }
    if(req.method==='PATCH'){const b=await body(req),name=b.name===undefined?n.name:String(b.name).trim();if(!name||name.length>60)fail('节点名称应为 1–60 字符');if(b.certificateRoot!==undefined)certificateProfiles.assignNode(id,b.certificateRoot);n.name=name;state.version++;audit('更新节点',n.name);return json(res,200,{ok:true});}
   }
   if(p===BASE+'/api/installations'&&req.method==='POST'){const b=await body(req);if(Object.keys(b).some(k=>!['id','action'].includes(k))||typeof b.id!=='string')fail('安装命令参数不正确');return json(res,200,installations.issue(b.id,b.action));}
@@ -239,9 +265,9 @@ const server=http.createServer(async(req,res)=>{try{
   return json(res,404,{error:'接口不存在'});
  }
  if(req.method!=='GET'&&req.method!=='HEAD')return json(res,405,{error:'不支持该方法'});
- const file=({[BASE]:'index.html',[BASE+'/']:'index.html',[BASE+'/app.js']:'app.js',[BASE+'/ui.js']:'ui.js',[BASE+'/onboarding.js']:'onboarding.js',[BASE+'/http-access.js']:'http-access.js',[BASE+'/graph-model.js']:'graph-model.js',[BASE+'/dashboard.js']:'dashboard.js',[BASE+'/style.css']:'style.css',[BASE+'/theme.css']:'theme.css',[BASE+'/account.js']:'account.js',[BASE+'/certificate-profiles.js']:'certificate-profiles.js',[BASE+'/settings.js']:'settings.js',[BASE+'/domains.js']:'domains.js',[BASE+'/security.js']:'security.js',[BASE+'/favicon.ico']:'favicon.ico',[BASE+'/favicon.png']:'favicon.png',[BASE+'/brand-logo.webp']:'brand-logo.webp'})[p];if(!file)return json(res,404,{error:'页面不存在'});
+ const file=({[BASE]:'index.html',[BASE+'/']:'index.html',[BASE+'/app.js']:'app.js',[BASE+'/ui.js']:'ui.js',[BASE+'/onboarding.js']:'onboarding.js',[BASE+'/http-access.js']:'http-access.js',[BASE+'/graph-model.js']:'graph-model.js',[BASE+'/dashboard.js']:'dashboard.js',[BASE+'/style.css']:'style.css',[BASE+'/theme.css']:'theme.css',[BASE+'/account.js']:'account.js',[BASE+'/certificate-profiles.js']:'certificate-profiles.js',[BASE+'/settings.js']:'settings.js',[BASE+'/domains.js']:'domains.js',[BASE+'/security.js']:'security.js',[BASE+'/management-api.js']:'management-api.js',[BASE+'/favicon.ico']:'favicon.ico',[BASE+'/favicon.png']:'favicon.png',[BASE+'/brand-logo.webp']:'brand-logo.webp'})[p];if(!file)return json(res,404,{error:'页面不存在'});
  res.writeHead(200,{'Content-Type':({'.html':'text/html','.js':'text/javascript','.css':'text/css','.ico':'image/x-icon','.png':'image/png','.webp':'image/webp'})[path.extname(file)]+(/\.(html|js|css)$/.test(file)?'; charset=utf-8':''),'Cache-Control':'no-store'});if(req.method==='HEAD')return res.end();if(file==='index.html')return res.end(fs.readFileSync(path.join(ROOT,'public',file),'utf8').replaceAll('__BUILD_VERSION__',VERSION));fs.createReadStream(path.join(ROOT,'public',file)).pipe(res);
- }catch(e){console.error('request failed:',e.status?e.message:'internal error');if(!res.headersSent)json(res,e.status||500,{error:e.status?e.message:'服务暂时不可用',...(e.retryAfter?{retryAfter:e.retryAfter}:{})},e.retryAfter?{'Retry-After':String(e.retryAfter)}:{});else res.destroy();}});
+ }catch(e){console.error('request failed:',e.status?e.message:'internal error');if(!res.headersSent)json(res,e.status||500,{error:e.status?e.message:'服务暂时不可用',...(e.retryAfter?{retryAfter:e.retryAfter}:{})},e.retryAfter?{'Retry-After':String(e.retryAfter)}:{});else res.destroy();}}));
 setInterval(()=>{for(const [k,v]of sessions)if(v.until<Date.now())sessions.delete(k);},600000).unref();
 server.requestTimeout=15000;server.headersTimeout=10000;server.listen(PORT,'127.0.0.1',()=>console.log('Chitanda · 数据中台管理 v2 listening on 127.0.0.1:'+PORT));
 module.exports={server};
