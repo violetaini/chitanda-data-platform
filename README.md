@@ -6,6 +6,8 @@
 
 生产中台使用 Chitanda SSO，已登录统一账号可自动返回中台；用户名、密码及两步验证在统一账号中心维护。生产关闭本地密码入口，管理 API 和节点仍使用独立凭据。配置、来源网段及宝塔 WAF 的 IDC 策略见 [统一登录文档](docs/sso.md)，修复与验证见 [2.23.0 审查](docs/audit-2.23.0.md)。
 
+SSO 身份服务源码独立保存在[私有仓库 chitanda-sso](https://github.com/violetaini/chitanda-sso)，本仓库只维护中台的 OIDC 客户端。需要运行 `npm run test:sso` 时，先将有权访问的私有仓库克隆到相邻的 `chitanda-sso` 目录并运行 `npm ci`，或用 `CT_SSO_SOURCE` 指定其路径。公开中台自身的安装和测试不需要私有仓库权限。
+
 ## 节点一键接入
 
 节点用途为 **国际隧道入口 / 优化机 / 国内隧道**，按实际路径自由组合。添加节点时直接选择这三种用途；双向通道可反向使用。同一台优化机兼任某侧入口时，根据实际源站关联显示双重职责，不添加虚构节点。业务源站继续单独呈现在拓扑中。
@@ -31,7 +33,7 @@
 | `deploy/tunnel-control/gateway/` | 独立 HTTPS 固定目标适配器及测试 |
 | `deploy/tunnel-control/*.service` | 低权限 systemd 单元模板 |
 | `deploy/tunnel-control/*.conf` | Nginx 管理入口与来源验证模板 |
-| `integrations/chitanda-sso/` | 统一账号服务及安全测试 |
+| `deploy/tunnel-control/sso.cjs` | 中台的 OIDC 客户端，身份服务源码在独立私有仓库 |
 | `scripts/` | 本地隔离的权限、账号与界面回归 |
 | `docs/` | 架构、运行边界和原部署历史 |
 

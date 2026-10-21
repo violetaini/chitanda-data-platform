@@ -7,8 +7,7 @@
     "node": ">=22"
   },
   "workspaces": [
-    "deploy/tunnel-control",
-    "integrations/chitanda-sso"
+    "deploy/tunnel-control"
   ],
   "scripts": {
     "start": "node --env-file-if-exists=.env.local deploy/tunnel-control/server.cjs",
@@ -19,7 +18,7 @@
     "build:node-release": "powershell -NoProfile -File deploy/tunnel-control/build-node-release.ps1",
     "sync:installer": "python scripts/sync-node-installer.py",
     "test:edge": "python scripts/edge-hardening.test.py",
-    "test:sso": "node --test scripts/sso-integration.test.cjs && npm test --workspace=chitanda-sso"
+    "test:sso": "node scripts/test-sso.cjs"
   },
   "devDependencies": {
     "playwright": "1.60.0"

@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),http=require('node:http'),crypto=require('node:crypto'),{spawn}=require('node:child_process');
-const ssoSource=process.env.CT_SSO_SOURCE||path.resolve(__dirname,'../integrations/chitanda-sso');
+const ssoSource=process.env.CT_SSO_SOURCE||path.resolve(__dirname,'../../chitanda-sso');
 test('real SSO and controller: PKCE, exact callbacks, subject authorization, CSRF, revocation and API isolation',async()=>{
  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'ct-sso-')),ssoDir=path.join(directory,'sso'),panelDir=path.join(directory,'panel');fs.mkdirSync(ssoDir);fs.mkdirSync(panelDir);
  const issuer='http://127.0.0.1:8797',origin='http://127.0.0.1:5097',secret='sec_'+crypto.randomBytes(32).toString('hex'),password='SSO-fixture-2026!';let sso,panel;let log='';

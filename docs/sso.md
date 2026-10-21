@@ -32,7 +32,7 @@ SSO 应用中精确登记回调 `https://datahub.chitanda.net/tunnel/sso/callbac
 
 SSO 1.1.1 中，启用两步验证前需确认当前密码，关闭时需同时输入密码与有效且未使用的动态验证码。更新两步验证后撤销其他设备会话，当前设备继续使用。验证码消费记录保存在私有 SQLite 中，覆盖完整时钟容差窗口并能跨服务重启防重放；密码校验和二维码生成结束后再次确认账号凭据、两步验证状态及会话仍有效。详见 [补充安全审查](sso-audit-1.1.1.md)。
 
-SSO 源码位于 [integrations/chitanda-sso](../integrations/chitanda-sso)。会话、授权码和刷新令牌保存在私有 SQLite 中；会话令牌、授权码及刷新令牌按哈希存储，客户端密钥只供后端使用。
+SSO 源码在独立[私有仓库 chitanda-sso](https://github.com/violetaini/chitanda-sso)维护，本公开仓库仅包含中台 OIDC 客户端。会话、授权码和刷新令牌保存在私有 SQLite 中；会话令牌、授权码及刷新令牌按哈希存储，客户端密钥只供后端使用。
 
 ## 独立认证路径
 

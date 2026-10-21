@@ -37,3 +37,6 @@ __pycache__/
 
 management-keys.json
 management-keys.json.tmp
+
+# SSO is maintained exclusively in its independent private repository.
+integrations/chitanda-sso/
