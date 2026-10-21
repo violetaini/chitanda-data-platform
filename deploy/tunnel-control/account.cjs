@@ -13,7 +13,7 @@ module.exports=function accountStore(directory){
  return {
   profile:()=>({username:account.username,avatarVersion:account.avatarVersion||'',hasAvatar:!!account.avatar}),
   avatar:()=>account.avatar?Buffer.from(account.avatar,'base64'):null,
-  login:async(username,password)=>{const current=account;const valid=await verifyAdminPasswordHash(String(password||''),current.passwordHash);return current===account&&valid&&username===current.username;},
+  login:async(username,password)=>{if(typeof username!=='string'||typeof password!=='string')return false;const current=account;const valid=await verifyAdminPasswordHash(password,current.passwordHash);return current===account&&valid&&username===current.username;},
   credentials:(input,active)=>serial(async()=>{
    if(!active())fail('会话已过期，请重新登录',401);
    if(!await verifyAdminPasswordHash(String(input.currentPassword||''),account.passwordHash))fail('当前密码不正确',400,'BAD_CURRENT_PASSWORD');

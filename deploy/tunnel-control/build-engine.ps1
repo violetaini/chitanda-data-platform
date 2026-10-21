@@ -1,5 +1,8 @@
 param([ValidateSet('amd64','arm64','armv7','386','riscv64','loong64','ppc64le','s390x')][string]$Architecture = 'amd64')
 $ErrorActionPreference = 'Stop'
+$security = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'go-security.json') -Raw | ConvertFrom-Json
+if ($security.toolchain -notmatch '^go[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid pinned Go toolchain' }
+$env:GOTOOLCHAIN = $security.toolchain
 $workspaceRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $sourcePath = Join-Path $workspaceRoot 'tmp/chitanda-tunnel-core'
 if (-not (Test-Path -LiteralPath $sourcePath)) {
@@ -29,6 +32,11 @@ $env:GO386 = 'softfloat'
 $env:CGO_ENABLED = '0'
 Push-Location $sourcePath
 try {
+    foreach ($dependency in $security.modules.PSObject.Properties) {
+        if ($dependency.Name -notmatch '^golang.org/x/[a-z]+$' -or $dependency.Value -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Invalid pinned Go dependency' }
+        go mod edit "-require=$($dependency.Name)@$($dependency.Value)"
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to pin security dependencies' }
+    }
     $outputPath = Join-Path $workspaceRoot "tmp/chitanda-transit-linux-$Architecture"
     go build -mod=mod -trimpath -ldflags '-s -w' -o $outputPath ./cmd/chitanda-transit
     if ($LASTEXITCODE -ne 0) { throw 'Engine build failed' }

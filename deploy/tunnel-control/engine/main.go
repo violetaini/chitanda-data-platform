@@ -28,7 +28,7 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.11.1"
+const version = "2.12.0"
 
 type Route struct {
 	HTTPAccess *HTTPRouteAccess `json:"httpAccess,omitempty"`
@@ -649,8 +649,9 @@ func (e *Engine) runRelayUntil(stop <-chan struct{}) error {
 		e.publicCert.Store(publicCertificate)
 	}
 
-	srv := &http.Server{Addr: cfg.Listen, Handler: app, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, TLSConfig: tlsConfig.Clone()}
+	srv := &http.Server{Addr: cfg.Listen, Handler: app, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 16 << 10, TLSConfig: tlsConfig.Clone()}
 	h3 := server.NewHTTP3Server(app, tlsConfig.Clone(), 1252)
+	h3.MaxHeaderBytes = 16 << 10
 	h3.Addr = cfg.Listen
 	h3.QUICConfig.MaxIncomingStreams = 96
 	h3.QUICConfig.InitialStreamReceiveWindow = 128 << 10

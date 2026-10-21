@@ -32,7 +32,7 @@
 
 ## 本地启动
 
-需要 Node.js 22+、npm 和 OpenSSL；Go 组件另需 Go 及 Git。Windows 可以使用 Git 附带的 OpenSSL，通过 `CT_OPENSSL` 指定其可执行文件。
+需要 Node.js 22+、npm 和 OpenSSL；生产面板采用独立的 Node.js 22.23.3，版本与校验值见 [panel-runtime.json](deploy/tunnel-control/panel-runtime.json)。Go 组件另需 Go 及 Git，构建脚本按 [go-security.json](deploy/tunnel-control/go-security.json) 固定安全工具链和依赖。Windows 可以使用 Git 附带的 OpenSSL，通过 `CT_OPENSSL` 指定其可执行文件。
 
 ```sh
 npm ci
@@ -98,3 +98,7 @@ SSL 证书先添加根域名，再从自动申请、DNS 面板同步、自行上
 在系统设置连接 DNS Manager 签名 API，再到数据通道页面创建单向或双向隧道，创建时填写业务域名，SNI 默认跟随且可自定义，由面板校验并发布解析；既有隧道也可在卡片补充绑定。单向通过 CNAME 将全部地区解析到一个入口 IP；双向将国内默认 / 国际境外分别解析到两个入口 IP，并统一管理两个方向。业务请求直接经过节点。节点卡片不再显示单个业务入口；每条隧道独立展示域名。已发布域名随鉴权心跳识别的节点 IP 自动更新地区解析，严格校验新地址证书，失败保留原解析并重试。操作步骤、证书边界和回退说明见 [域名与地区调度](docs/domain-routing.md)。
 
 每次完成代码、样式、配置或文档修改后，应更新 `CHANGELOG.md` 并提交、推送 GitHub；运行凭据、DNS API 密钥与服务器私有状态不得提交。
+
+安全复查、限流策略、生产入口配置及告警解释见 [2.22.0 审查记录](docs/audit-2.22.0.md)。HTTP 上下文载入 `datahub-abuse-limits.conf` 后使用配套 vhost；现有部署可运行 `harden-edge.py --vhost 站点配置路径 --http-output HTTP上下文配置路径` 增量应用，保留私有来源身份配置。
+
+新增入口配置工具的回归检查可运行 `npm run test:edge`。生产服务使用 `/opt/chitanda-transit-panel/runtime/bin/node`；首次部署时按运行时清单核对官方包的 SHA-256 后，将其中 `bin/node` 安装到此路径并设为 0755。现有系统 Node 路径不需要替换。
