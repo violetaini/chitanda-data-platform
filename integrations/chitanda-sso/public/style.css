@@ -209,6 +209,17 @@
   gap: 12px;
 }
 
+.oauth-client-icon {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  object-fit: contain;
+  border-radius: 12px;
+  background: #fffaf6;
+  border: 1px solid #e1d3e6;
+  padding: 5px;
+}
+
 .oauth-client-banner strong {
   color: #6e5b7c;
   display: block;
