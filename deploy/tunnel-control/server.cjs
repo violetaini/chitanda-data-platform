@@ -125,6 +125,13 @@ const server=http.createServer((req,res)=>requestContext.run({},async()=>{try{
  for(const [k,v]of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Frame-Options':'DENY','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"}))res.setHeader(k,v);
  let p=new URL(req.url,'http://localhost').pathname;const clientIP=String(req.headers['x-real-ip']||req.socket.remoteAddress||'').replace(/^::ffff:/,'');
  if(p.startsWith(BASE)&&!ALLOWED_IPS.has(clientIP))return json(res,403,{error:'访问被拒绝'});
+ if(p===BASE+'/api/management-openapi'&&req.method==='GET'&&String(req.headers.accept||'').includes('text/html')&&new URL(req.url,'http://localhost').searchParams.get('format')!=='json'){
+  res.writeHead(302,{'Location':BASE+'/api-docs','Cache-Control':'no-store'});return res.end();
+ }
+ if(p===BASE+'/api-docs'){
+  const token=String(req.headers.cookie||'').match(/(?:^|;\s*)ct_session=([a-f0-9]{64})(?:;|$)/)?.[1],s=sessions.get(token);
+  if(!s||s.until<Date.now()||s.clientIP!==clientIP){res.writeHead(302,{'Location':BASE+'/','Cache-Control':'no-store'});return res.end();}
+ }
  if(p.startsWith(BASE+'/api/v1/')){
   const requested=p.slice((BASE+'/api/v1').length),route=managementAPI.match(requested,req.method),principal=managementKeys.authorize(req,route?.scope,clientIP);
   if(requested==='/openapi.json'&&req.method==='GET')return json(res,200,managementAPI.schema());
@@ -265,8 +272,8 @@ const server=http.createServer((req,res)=>requestContext.run({},async()=>{try{
   return json(res,404,{error:'接口不存在'});
  }
  if(req.method!=='GET'&&req.method!=='HEAD')return json(res,405,{error:'不支持该方法'});
- const file=({[BASE]:'index.html',[BASE+'/']:'index.html',[BASE+'/app.js']:'app.js',[BASE+'/ui.js']:'ui.js',[BASE+'/onboarding.js']:'onboarding.js',[BASE+'/http-access.js']:'http-access.js',[BASE+'/graph-model.js']:'graph-model.js',[BASE+'/dashboard.js']:'dashboard.js',[BASE+'/style.css']:'style.css',[BASE+'/theme.css']:'theme.css',[BASE+'/account.js']:'account.js',[BASE+'/certificate-profiles.js']:'certificate-profiles.js',[BASE+'/settings.js']:'settings.js',[BASE+'/domains.js']:'domains.js',[BASE+'/security.js']:'security.js',[BASE+'/management-api.js']:'management-api.js',[BASE+'/favicon.ico']:'favicon.ico',[BASE+'/favicon.png']:'favicon.png',[BASE+'/brand-logo.webp']:'brand-logo.webp'})[p];if(!file)return json(res,404,{error:'页面不存在'});
- res.writeHead(200,{'Content-Type':({'.html':'text/html','.js':'text/javascript','.css':'text/css','.ico':'image/x-icon','.png':'image/png','.webp':'image/webp'})[path.extname(file)]+(/\.(html|js|css)$/.test(file)?'; charset=utf-8':''),'Cache-Control':'no-store'});if(req.method==='HEAD')return res.end();if(file==='index.html')return res.end(fs.readFileSync(path.join(ROOT,'public',file),'utf8').replaceAll('__BUILD_VERSION__',VERSION));fs.createReadStream(path.join(ROOT,'public',file)).pipe(res);
+ const file=({[BASE]:'index.html',[BASE+'/']:'index.html',[BASE+'/api-docs']:'api-docs.html',[BASE+'/api-docs.js']:'api-docs.js',[BASE+'/api-docs.css']:'api-docs.css',[BASE+'/app.js']:'app.js',[BASE+'/ui.js']:'ui.js',[BASE+'/onboarding.js']:'onboarding.js',[BASE+'/http-access.js']:'http-access.js',[BASE+'/graph-model.js']:'graph-model.js',[BASE+'/dashboard.js']:'dashboard.js',[BASE+'/style.css']:'style.css',[BASE+'/theme.css']:'theme.css',[BASE+'/account.js']:'account.js',[BASE+'/certificate-profiles.js']:'certificate-profiles.js',[BASE+'/settings.js']:'settings.js',[BASE+'/domains.js']:'domains.js',[BASE+'/security.js']:'security.js',[BASE+'/management-api.js']:'management-api.js',[BASE+'/favicon.ico']:'favicon.ico',[BASE+'/favicon.png']:'favicon.png',[BASE+'/brand-logo.webp']:'brand-logo.webp'})[p];if(!file)return json(res,404,{error:'页面不存在'});
+ res.writeHead(200,{'Content-Type':({'.html':'text/html','.js':'text/javascript','.css':'text/css','.ico':'image/x-icon','.png':'image/png','.webp':'image/webp'})[path.extname(file)]+(/\.(html|js|css)$/.test(file)?'; charset=utf-8':''),'Cache-Control':'no-store'});if(req.method==='HEAD')return res.end();if(path.extname(file)==='.html')return res.end(fs.readFileSync(path.join(ROOT,'public',file),'utf8').replaceAll('__BUILD_VERSION__',VERSION));fs.createReadStream(path.join(ROOT,'public',file)).pipe(res);
  }catch(e){console.error('request failed:',e.status?e.message:'internal error');if(!res.headersSent)json(res,e.status||500,{error:e.status?e.message:'服务暂时不可用',...(e.retryAfter?{retryAfter:e.retryAfter}:{})},e.retryAfter?{'Retry-After':String(e.retryAfter)}:{});else res.destroy();}}));
 setInterval(()=>{for(const [k,v]of sessions)if(v.until<Date.now())sessions.delete(k);},600000).unref();
 server.requestTimeout=15000;server.headersTimeout=10000;server.listen(PORT,'127.0.0.1',()=>console.log('Chitanda · 数据中台管理 v2 listening on 127.0.0.1:'+PORT));

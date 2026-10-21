@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f7f4ee">
+ <title>管理 API · Chitanda</title><link rel="icon" href="/tunnel/favicon.ico">
+ <link rel="stylesheet" href="/tunnel/api-docs.css?v=__BUILD_VERSION__"><script src="/tunnel/api-docs.js?v=__BUILD_VERSION__" defer></script>
+</head>
+<body>
+ <header><a class="brand" href="/tunnel/"><img src="/tunnel/favicon.png" width="32" height="32" alt="">CHITANDA <span>DATA PLATFORM</span></a><a href="/tunnel/">返回控制台 ↗</a></header>
+ <main>
+  <div class="intro"><span class="eyebrow">MANAGEMENT API · V1</span><h1>管理 API 文档</h1><p>让其他程序管理节点、隧道与测活。</p><code id="api-base"></code></div>
+  <section aria-labelledby="access-title"><div class="section-head"><h2 id="access-title">权限怎么设置</h2><a href="/tunnel/">返回控制台 ↗</a></div><p>在控制台「系统设置 → 管理 API → 创建密钥」勾选允许的操作。已有密钥需要调整权限时，创建新密钥替换，再撤销旧密钥。</p><div id="scopes" class="scopes"></div><p class="note">这里使用管理 API 密钥（ctm_ 开头），与业务隧道令牌分开。完整密钥只在创建时显示一次；来源 IP 限制与控制台一致。</p></section>
+  <section aria-labelledby="try-title"><span class="eyebrow">TRY A QUERY</span><h2 id="try-title">填入密钥，测试查询</h2><p>密钥只用于本页本次请求，关闭或刷新页面后清除。</p><form id="query-form"><label>管理 API 密钥<input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 ctm_ 开头的密钥" required maxlength="100"></label><div class="query-row"><label>查询内容<select id="query-path"><option value="/status">中台状态 · status:read</option><option value="/nodes">节点列表 · nodes:read</option><option value="/tunnels">隧道列表 · tunnels:read</option></select></label><button type="submit" id="send-query" class="primary">发送查询 →</button><button type="button" id="clear-key">清除密钥</button></div></form><p id="query-status" role="status">尚未发送请求</p><pre id="query-result" tabindex="0" hidden></pre></section>
+  <section aria-labelledby="endpoints-title"><div class="section-head"><h2 id="endpoints-title">接口与参数</h2><a href="/tunnel/api/management-openapi?format=json" target="_blank" rel="noopener">OpenAPI JSON ↗</a></div><p>请求头使用 <code>Authorization: Bearer 管理API密钥</code>。写入操作发送 JSON；空请求体也传 <code>{}</code>。展开下方接口查看参数。</p><div id="endpoints" aria-live="polite"><p>正在读取接口…</p></div><p class="note">401：密钥缺失、过期或已撤销。403：缺少对应权限或来源 IP 不允许。409：资源冲突。429：请求过于频繁。</p></section>
+ </main><footer>Chitanda · 数据中台管理</footer>
+</body></html>

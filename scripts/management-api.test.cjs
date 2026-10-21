@@ -24,6 +24,14 @@ test('versioned API preserves browser security, limits scopes and uses the real 
  const request=async(p,method='GET',headers={},value)=>{const r=await fetch(base+p,{method,headers:{Connection:'close',...headers},...(value===undefined?{}:{body:JSON.stringify(value)})}).catch(e=>{throw Error(method+' '+p+': '+e.message,{cause:e});});return {status:r.status,body:await r.json()};};
  try{await start();const login=await fetch(base+'/tunnel/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'api-admin',password})}),cookie=login.headers.get('set-cookie').split(';')[0],session=await login.json(),admin={Cookie:cookie,'X-CSRF-Token':session.csrf,'Content-Type':'application/json'};
   const create=async scopes=>{const r=await request('/tunnel/api/management-keys','POST',admin,{name:'fixture',scopes,expiresInDays:1});assert.equal(r.status,201);return {record:r.body,headers:{Authorization:'Bearer '+r.body.secret,'Content-Type':'application/json'}};};
+  const docs=await fetch(base+'/tunnel/api-docs',{headers:{Cookie:cookie}});assert.equal(docs.status,200);assert.match(docs.headers.get('content-type'),/text\/html/);assert.match(await docs.text(),/api-docs\.js\?v=2\./);
+  const noSession=await fetch(base+'/tunnel/api-docs',{redirect:'manual'});assert.equal(noSession.status,302);assert.equal(noSession.headers.get('location'),'/tunnel/');
+  const browserLogin=await fetch(base+'/tunnel/api/management-openapi',{headers:{Accept:'text/html'}});assert.equal(browserLogin.url,base+'/tunnel/');assert.match(browserLogin.headers.get('content-type'),/text\/html/);
+  assert.equal((await fetch(base+'/tunnel/api-docs',{headers:{Cookie:cookie,'X-Real-IP':'8.8.8.8'},redirect:'manual'})).status,403);
+  const legacy=await fetch(base+'/tunnel/api/management-openapi',{headers:{Cookie:cookie,Accept:'text/html'},redirect:'manual'});assert.equal(legacy.status,302);assert.equal(legacy.headers.get('location'),'/tunnel/api-docs');
+  const specRaw=await fetch(base+'/tunnel/api/management-openapi?format=json',{headers:{Cookie:cookie,Accept:'text/html'}});assert.equal((await specRaw.json()).openapi,'3.1.0');
+  assert.equal((await request('/tunnel/api/management-openapi','GET',admin)).body.openapi,'3.1.0');
+  assert.equal((await request('/tunnel/api/management-openapi')).status,401);
   const read=await create(['status:read','nodes:read','tunnels:read']),full=await create(['status:read','nodes:read','nodes:write','tunnels:read','tunnels:write','checks:write']),nodeOnly=await create(['nodes:write']);
   assert.equal((await request('/tunnel/api/v1/status')).status,401);assert.equal((await request('/tunnel/api/v1/status','GET',admin)).status,401);
   assert.equal((await request('/tunnel/api/management-keys','POST',{Cookie:cookie,'Content-Type':'application/json'},{name:'bad',scopes:['status:read']})).status,403);

@@ -13,6 +13,10 @@ curl --fail-with-body \
 
 所有请求使用 Bearer 密钥；写入使用 `Content-Type: application/json`。需要空请求体的写入操作也发送 `{}`。无需 Cookie 或 CSRF 值；管理面板原有会话及 CSRF 规则不变。
 
+登录面板后可打开 [API 文档与权限](https://datahub.chitanda.net/tunnel/api-docs)，展开接口查看参数，并填写管理密钥测试状态、节点及隧道查询。密钥仅保留在当前页面，刷新或关闭后清除。测试请求只使用填写的密钥，不借用管理员登录权限。
+
+原始 OpenAPI JSON：`/tunnel/api/management-openapi?format=json`（管理员会话），或 `/tunnel/api/v1/openapi.json`（管理 API 密钥）。浏览器打开旧文档地址时会自动进入可读文档页；程序以 JSON 请求时返回格式不变。
+
 ## 权限与接口
 
 | 方法与相对路径 | 权限 | 用途 |
@@ -87,4 +91,4 @@ curl --fail-with-body -X PATCH \
 
 创建操作暂不提供幂等键；网络中断后先查询列表确认结果，避免直接重试而重复创建。暂停状态更新可安全重复。不要把完整密钥写入公共脚本或日志。
 
-登录面板后也可打开 `/tunnel/api/management-openapi` 阅读 OpenAPI 文档。该地址仍要求管理员会话。
+登录面板后打开 `/tunnel/api-docs` 查看文档与权限说明；原始 JSON 使用 `/tunnel/api/management-openapi?format=json`。文档入口仍要求管理员会话。
