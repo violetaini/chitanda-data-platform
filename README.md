@@ -22,7 +22,7 @@ SSO 身份服务源码独立保存在[私有仓库 chitanda-sso](https://github.
 
 ## 下载服务
 
-在左侧“下载服务”统一维护 Docker 与 GitHub 下载入口的 IP / CIDR 白名单；更改自动下发节点，显示已确认的配置版本。香港等承接节点可复用现有 HTTPS 入口，不需要额外部署宝塔或 Docker。接入、部署边界与测试见 [下载服务文档](docs/download-services.md)。
+在左侧“下载服务”统一维护 Docker 与 GitHub 下载入口的 IP / CIDR 白名单；更改自动下发节点，显示已确认的配置版本。香港等承接节点可复用现有 HTTPS 入口，不需要额外部署宝塔或 Docker。接入与白名单维护见 [下载服务文档](docs/download-services.md)，部署、迁移与回退见 [部署思路](docs/download-services-deployment.md)（使用脱敏示例）。
 
 ## 管理 API
 
