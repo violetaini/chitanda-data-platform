@@ -28,7 +28,7 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.12.0"
+const version = "2.13.1"
 
 type Route struct {
 	HTTPAccess *HTTPRouteAccess `json:"httpAccess,omitempty"`
@@ -62,30 +62,32 @@ type Relay struct {
 	CA          string `json:"ca"`
 }
 type Config struct {
-	BusinessAccessFile string              `json:"businessAccessFile,omitempty"`
-	TunnelAccess       []TunnelAccess      `json:"tunnelAccess"`
-	HTTPSIngress       *HTTPSIngressConfig `json:"httpsIngress,omitempty"`
-	HTTPSCertificate   *ManagedCertificate `json:"httpsCertificate,omitempty"`
-	Checks             []RouteCheckTask    `json:"checks,omitempty"`
-	DataGateway        *DataGatewayConfig  `json:"dataGateway,omitempty"`
-	CredentialVersion  string              `json:"credentialVersion"`
-	CA                 string              `json:"ca"`
-	Relays             []Relay             `json:"relays"`
-	SelfRelay          *Relay              `json:"selfRelay,omitempty"`
-	Controller         string              `json:"controller"`
-	ControllerAddress  string              `json:"controllerAddress"`
-	ID                 string              `json:"id"`
-	Token              string              `json:"token"`
-	Role               string              `json:"role"`
-	Revision           int                 `json:"revision"`
-	Listen             string              `json:"listen"`
-	Cert               string              `json:"cert"`
-	Key                string              `json:"key"`
-	PSK                string              `json:"psk"`
-	Path               string              `json:"path"`
-	Nodes              []Node              `json:"nodes"`
-	Routes             []Route             `json:"routes"`
-	Relay              Relay               `json:"relay"`
+	DownloadBackendEnabled bool                  `json:"downloadBackendEnabled,omitempty"`
+	DownloadAccess         *DownloadAccessConfig `json:"downloadAccess,omitempty"`
+	BusinessAccessFile     string                `json:"businessAccessFile,omitempty"`
+	TunnelAccess           []TunnelAccess        `json:"tunnelAccess"`
+	HTTPSIngress           *HTTPSIngressConfig   `json:"httpsIngress,omitempty"`
+	HTTPSCertificate       *ManagedCertificate   `json:"httpsCertificate,omitempty"`
+	Checks                 []RouteCheckTask      `json:"checks,omitempty"`
+	DataGateway            *DataGatewayConfig    `json:"dataGateway,omitempty"`
+	CredentialVersion      string                `json:"credentialVersion"`
+	CA                     string                `json:"ca"`
+	Relays                 []Relay               `json:"relays"`
+	SelfRelay              *Relay                `json:"selfRelay,omitempty"`
+	Controller             string                `json:"controller"`
+	ControllerAddress      string                `json:"controllerAddress"`
+	ID                     string                `json:"id"`
+	Token                  string                `json:"token"`
+	Role                   string                `json:"role"`
+	Revision               int                   `json:"revision"`
+	Listen                 string                `json:"listen"`
+	Cert                   string                `json:"cert"`
+	Key                    string                `json:"key"`
+	PSK                    string                `json:"psk"`
+	Path                   string                `json:"path"`
+	Nodes                  []Node                `json:"nodes"`
+	Routes                 []Route               `json:"routes"`
+	Relay                  Relay                 `json:"relay"`
 }
 type Hello struct {
 	Transport  string `json:"transport,omitempty"`
@@ -202,7 +204,12 @@ func (e *Engine) report() map[string]any {
 			}
 		}
 	}
-	return map[string]any{"ports": ports, "listenerErrors": listenerErrors, "routeChecks": e.checkReports(), "capabilities": map[string]any{"routeProbe": 1, "relayChain": 1, "headerURL": 1, "directEndpoint": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
+	return map[string]any{"ports": ports, "listenerErrors": listenerErrors, "routeChecks": e.checkReports(), "downloadAccess": e.downloadReportLocked(), "capabilities": map[string]any{"downloadAccess": func() int {
+		if e.cfg.DownloadBackendEnabled {
+			return 1
+		}
+		return 0
+	}(), "routeProbe": 1, "relayChain": 1, "headerURL": 1, "directEndpoint": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
 }
 func (e *Engine) syncConfig() error {
 	e.syncMu.Lock()
@@ -254,6 +261,7 @@ func (e *Engine) syncConfig() error {
 		return fmt.Errorf("business access update failed: %w", err)
 	}
 	e.mu.Lock()
+	e.cfg.DownloadAccess = update.DownloadAccess
 	e.cfg.TunnelAccess = update.TunnelAccess
 	e.cfg.HTTPSCertificate = update.HTTPSCertificate
 	e.cfg.CredentialVersion = update.CredentialVersion
@@ -274,7 +282,7 @@ func (e *Engine) syncConfig() error {
 		e.cfg.Relay = update.Relay
 	}
 	e.mu.Unlock()
-	if cfg.Revision != update.Revision || cfg.CredentialVersion != update.CredentialVersion || !slices.Equal(cfg.TunnelAccess, update.TunnelAccess) {
+	if cfg.Revision != update.Revision || cfg.CredentialVersion != update.CredentialVersion || !slices.Equal(cfg.TunnelAccess, update.TunnelAccess) || downloadPolicyChanged(cfg.DownloadAccess, update.DownloadAccess) {
 		runtimeCfg, _ := json.Marshal(e.config())
 		if err := os.WriteFile("/var/lib/chitanda-transit/runtime.json.tmp", runtimeCfg, 0600); err == nil {
 			os.Rename("/var/lib/chitanda-transit/runtime.json.tmp", "/var/lib/chitanda-transit/runtime.json")
@@ -624,7 +632,14 @@ func (e *Engine) runRelayUntil(stop <-chan struct{}) error {
 	if err != nil {
 		return err
 	}
+	app = e.downloadHandler(app)
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		if cert, matched := e.downloadCertificate(hello); matched {
+			if cert == nil {
+				return nil, errors.New("download certificate unavailable")
+			}
+			return cert, nil
+		}
 		if publicCertificate != nil && hello.ServerName == cfg.DataGateway.Domain {
 			if current := e.publicCert.Load(); current != nil {
 				return current, nil
@@ -848,9 +863,9 @@ func main() {
 	if raw, err := os.ReadFile("/var/lib/chitanda-transit/runtime.json"); err == nil {
 		var cached Config
 		if json.Unmarshal(raw, &cached) == nil && compatibleCache(cfg, cached) {
-			gateway, ingress, accessFile := cfg.DataGateway, cfg.HTTPSIngress, cfg.BusinessAccessFile
+			gateway, ingress, accessFile, downloads := cfg.DataGateway, cfg.HTTPSIngress, cfg.BusinessAccessFile, cfg.DownloadBackendEnabled
 			cfg = cached
-			cfg.DataGateway, cfg.HTTPSIngress, cfg.BusinessAccessFile = gateway, ingress, accessFile
+			cfg.DataGateway, cfg.HTTPSIngress, cfg.BusinessAccessFile, cfg.DownloadBackendEnabled = gateway, ingress, accessFile, downloads
 		}
 	}
 	e := &Engine{cfg: cfg, started: time.Now(), pools: map[string]chan net.Conn{}, listeners: map[string]net.Listener{}, outbound: make(chan struct{}, 32), slots: make(chan struct{}, 96), links: map[string]*Link{}, connections: map[*slotConn]Hello{}}

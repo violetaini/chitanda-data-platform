@@ -1,0 +1,33 @@
+[Unit]
+Description=Chitanda Docker and GitHub download service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=chitanda-download
+Group=chitanda-download
+WorkingDirectory=/var/lib/chitanda-download
+StateDirectory=chitanda-download
+StateDirectoryMode=0700
+ExecStart=/opt/chitanda-download/chitanda-download
+Environment=SERVER_HOST=127.0.0.1
+Environment=SERVER_PORT=5000
+Environment=ENABLE_FRONTEND=false
+Environment=IP_WHITELIST=127.0.0.1
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+MemoryMax=256M
+TasksMax=128
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

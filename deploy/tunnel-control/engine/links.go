@@ -335,6 +335,7 @@ func (e *Engine) revoke() {
 	e.cfg.SelfRelay = nil
 	e.cfg.Nodes = nil
 	e.cfg.TunnelAccess = nil
+	e.cfg.DownloadAccess = nil
 	_ = writeTunnelAccess(e.cfg.BusinessAccessFile, nil)
 	e.cfg.Routes = nil
 	e.cfg.Relays = nil
@@ -343,6 +344,7 @@ func (e *Engine) revoke() {
 	}
 	e.lastError = "node credentials revoked"
 	e.mu.Unlock()
+	e.persistRevokedDownloadPolicy()
 	e.reconcileEndpointServer()
 	for _, l := range links {
 		l.cancel()
