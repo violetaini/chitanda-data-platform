@@ -50,9 +50,13 @@ test('real SSO and controller: PKCE, exact callbacks, subject authorization, CSR
    assert.equal(await page.locator('#account-form').count(),0,'SSO account page has no local password form');assert.equal(await page.getByRole('link',{name:'管理统一账号'}).count(),1);
    assert.equal(await page.locator('#settings-avatar').count(),1);assert.deepEqual(errors,[]);
    await page.screenshot({path:path.resolve(__dirname,'../tmp/sso-account-qa.png'),fullPage:true});
+   const confirmation=await page.goto(issuer+'/oauth/logout',{waitUntil:'domcontentloaded'});assert.equal(confirmation.status(),200);assert.equal((await confirmation.allHeaders())['set-cookie'],undefined);
+   assert.equal((await request(issuer,'/oauth/userinfo',{headers:{Authorization:'Bearer '+tokens.json.access_token}})).status,200,'logout navigation only asks for confirmation');
+   const submitted=page.waitForResponse(r=>r.url().startsWith(issuer+'/oauth/logout')&&r.request().method()==='POST');
+   await page.getByRole('button',{name:'确认退出'}).click();const out=await submitted;assert.equal(out.status(),302);assert.match((await out.allHeaders())['set-cookie'],/Max-Age=0/);
+   await page.waitForURL(issuer+'/login',{waitUntil:'domcontentloaded'});
    await context.close();
   }finally{await browser.close();}
-  const out=await request(issuer,'/oauth/logout',{headers:{Cookie:ssoCookie}});assert.match(out.headers.get('set-cookie'),/Max-Age=0/);
   assert.equal((await request(origin,'/tunnel/api/settings',{method:'PATCH',headers:admin,body:{}})).status,401,'SSO revocation is checked before writes');
   assert.equal((await request(origin,'/tunnel/api/session',{headers:{Cookie:panelCookie}})).status,401);
   assert.equal((await request(issuer,'/oauth/userinfo',{headers:{Authorization:'Bearer '+tokens.json.access_token}})).status,401,'revoked global session invalidates access token');
