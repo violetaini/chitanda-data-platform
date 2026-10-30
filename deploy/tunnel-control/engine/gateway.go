@@ -114,7 +114,7 @@ func gatewayFixedTarget(ep GatewayEndpoint) (*url.URL, error) {
 func newGatewayHandler(ep GatewayEndpoint) (http.Handler, error) {
 	return newGatewayHandlerWithAccess(ep, nil)
 }
-func newGatewayHandlerWithAccess(ep GatewayEndpoint, access func() []TunnelAccess) (http.Handler, error) {
+func newGatewayHandlerWithAccess(ep GatewayEndpoint, access func() []TunnelAccess, failover ...func(string) http.RoundTripper) (http.Handler, error) {
 	if ep.TunnelAccessFile != "" {
 		ep.ManagedAuth = true
 		access = func() []TunnelAccess { return readTunnelAccess(ep.TunnelAccessFile) }
@@ -174,7 +174,7 @@ func newGatewayHandlerWithAccess(ep GatewayEndpoint, access func() []TunnelAcces
 		log.Printf("fixed upstream request failed: %v", err)
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
 	}, ErrorLog: log.New(io.Discard, "", 0)}
-	headerIngress := newHeaderIngress(target, access, accessPort)
+	headerIngress := newHeaderIngress(target, access, accessPort, failover...)
 	slots := make(chan struct{}, 8)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -259,7 +259,7 @@ func (e *Engine) dataGatewayHandler(fallback http.Handler) (http.Handler, *tls.C
 	if err := certificate.Leaf.VerifyHostname(cfg.Domain); err != nil {
 		return nil, nil, err
 	}
-	ingress, err := newGatewayHandlerWithAccess(cfg.Ingress, func() []TunnelAccess { return e.config().TunnelAccess })
+	ingress, err := newGatewayHandlerWithAccess(cfg.Ingress, func() []TunnelAccess { return e.config().TunnelAccess }, e.failoverHTTPTransport)
 	if err != nil {
 		return nil, nil, err
 	}

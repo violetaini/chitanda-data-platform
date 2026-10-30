@@ -32,7 +32,7 @@ func headerTargetURL(r *http.Request) (*url.URL, error) {
 	}
 	return u, nil
 }
-func newHeaderIngress(target *url.URL, access func() []TunnelAccess, port int) func(http.ResponseWriter, *http.Request) bool {
+func newHeaderIngress(target *url.URL, access func() []TunnelAccess, port int, failover ...func(string) http.RoundTripper) func(http.ResponseWriter, *http.Request) bool {
 	slots := make(chan struct{}, 8)
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: 240 * time.Second, MaxConnsPerHost: 16}
 	template := &httputil.ReverseProxy{Transport: transport, FlushInterval: -1, Rewrite: func(p *httputil.ProxyRequest) {
@@ -89,6 +89,11 @@ func newHeaderIngress(target *url.URL, access func() []TunnelAccess, port int) f
 		r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
 		selected, _ := url.Parse("http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(matched.ListenPort)))
 		proxy := *template
+		if len(failover) > 0 {
+			if tr := failover[0](matched.RouteID); tr != nil {
+				proxy.Transport = tr
+			}
+		}
 		proxy.Rewrite = func(p *httputil.ProxyRequest) {
 			template.Rewrite(p)
 			p.Out.URL.Scheme = selected.Scheme

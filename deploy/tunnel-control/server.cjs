@@ -1,5 +1,6 @@
 'use strict';
 const http=require('node:http'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),net=require('node:net'),{execFileSync}=require('node:child_process');
+const failover=require('./failover.cjs');
 const routePath=require('./route-path.cjs'),endpointCarriers=require('./endpoint-carriers.cjs');
 const carrierNodes=()=>endpointCarriers.all(state);
 const ensureCarrierCertificates=()=>endpointCarriers.certificates(state,ensureCertificate);
@@ -40,7 +41,7 @@ const openssl=args=>execFileSync(process.env.CT_OPENSSL||'openssl',args,{stdio:'
 if(!fs.existsSync(path.join(pki,'ca.crt'))){openssl(['req','-x509','-newkey','ec','-pkeyopt','ec_paramgen_curve:P-256','-nodes','-days','3650','-subj','/CN=Chitanda · 数据中台管理 Workspace CA','-addext','basicConstraints=critical,CA:TRUE','-addext','keyUsage=critical,keyCertSign,cRLSign','-keyout',path.join(pki,'ca.key'),'-out',path.join(pki,'ca.crt')]);fs.chmodSync(path.join(pki,'ca.key'),0o600);}
 state.ca=fs.readFileSync(path.join(pki,'ca.crt'),'utf8');
 function ensureCertificate(relay){
- const routeNames=state.routes.filter(r=>routePath.relays(r).includes(relay.id)&&r.transport!=='stream').map(r=>domain(r.serverName));
+ const routeNames=failover.all(state).filter(r=>routePath.relays(r).includes(relay.id)&&r.transport!=='stream').map(r=>domain(r.serverName));
  const names=[...new Set(routeNames.length?routeNames:[domain(relay.serverName)])].sort();
  const custom=state.certificates?.channel;if(custom?.mode==='custom'){const cert=new crypto.X509Certificate(custom.certPEM);for(const name of names)if(!cert.checkHost(name))fail('系统证书未覆盖 SNI：'+name);relay.certPEM=custom.certPEM;relay.keyPEM=custom.keyPEM;relay.certNames=names;relay.certExpires=cert.validTo;return;}
  if(names.length>24)fail('同一优化机最多配置 24 个 SNI 域名');
@@ -74,14 +75,18 @@ const linkKey=r=>[r.relayId,r.transport,r.serverName].join('|');
 function cleanNode(n,relay=false){const role=relay?'优化机':n.role?.includes('国内')?'国内隧道':n.role?.includes('国际')?'国际隧道入口':n.role||'隧道入口',entryRoles=relay?[...new Set((state.origins||[]).filter(o=>o.endpoint===n.id).flatMap(o=>o.region==='mainland'||o.role?.includes('国内')?['国内隧道']:o.region==='international'||o.role?.includes('国际')?['国际隧道入口']:[]))]:[];return {id:n.id,name:n.name,host:n.host||'',role,entryRoles,kind:relay?'relay':'agent',certificateRoot:n.certificateRoot||'',installed:n.installation?.status==='installed',installation:n.installation||null,ingress:n.ingress||null,...(relay?{port:n.port,serverName:n.serverName,tlsVerify:true,certExpires:n.certExpires,certNames:n.certNames,protocols:report(n.id).capabilities?.transports||[]}:{}),...report(n.id)};}
 function snapshot(){
  const relays=state.relays.map(n=>cleanNode(n,true)),nodes=state.nodes.map(n=>cleanNode(n));
- const routes=state.routes.map(r=>{const s=report(r.source),t=report(r.target),mids=routePath.relays(r).map(report),current=n=>Number(n.revision)>=state.version,linked=id=>{const peer=routePath.link(r,id);return !peer||report(id).links?.[[peer,r.transport,r.serverName].join('|')]?.connected;};return {...r,urlMode:!!httpAccess.route(state,r,r.source),listenError:s.listenerErrors?.[r.id]||null,test:routeChecks.get(r.id),configPending:[s,t,...mids].some(n=>n.online&&!current(n)),sourceOnline:!!(s.online&&current(s)&&s.listeners?.includes(r.id)&&linked(r.source)),targetOnline:!!(t.online&&current(t)&&linked(r.target)),relayOnline:!!(supportedRoute(r)&&mids.every(n=>n.online&&current(n))&&routePath.relays(r).every(linked))};});
- const origins=(state.origins||[]).map(n=>({...n,kind:'origin'}));const topology={nodes:[{id:'@controller',kind:'control',name:'数据中台',host:'',online:true},...origins,...relays,...nodes],edges:[...origins.flatMap(n=>[{id:'https:'+n.id,source:n.id,target:n.endpoint,kind:'https',name:'HTTPS 业务接入',transport:'https',enabled:true},{id:'https-return:'+n.id,source:n.endpoint,target:n.id,kind:'https',name:'HTTPS 业务接入',transport:'https',enabled:true}]),...[...relays,...nodes].map(n=>({id:'config:'+n.id,source:'@controller',target:n.id,kind:'control'})),...routes.flatMap(r=>{const p=routePath.path(r);return p.slice(1).map((target,i)=>({id:r.id+':hop:'+i,source:p[i],target,routeId:r.id,name:r.name,transport:r.transport,enabled:r.enabled,ready:r.sourceOnline&&r.targetOnline&&r.relayOnline}));})]};
+ const routes=state.routes.map(r=>{
+  const s=report(r.source),t=report(r.target),mids=routePath.relays(r).map(report),current=n=>Number(n.revision)>=state.version,linked=(path,id)=>{const peer=routePath.link(path,id);return !peer||report(id).links?.[[peer,path.transport,path.serverName].join('|')]?.connected;};
+  const status=s.failover?.[r.id],healthy=status&&Object.values(status.paths||{}).some(p=>p.healthy&&Date.now()-p.checkedAt<30000),primaryMids=supportedRoute(r)&&mids.every(n=>n.online&&current(n))&&routePath.relays(r).every(id=>linked(r,id));
+  return {...r,failover:status||null,urlMode:!!httpAccess.route(state,r,r.source),listenError:s.listenerErrors?.[r.id]||null,test:routeChecks.get(r.id),configPending:[s,t,...mids].some(n=>n.online&&!current(n)),sourceOnline:!!(s.online&&current(s)&&s.listeners?.includes(r.id)&&(linked(r,r.source)||healthy)),targetOnline:!!(t.online&&current(t)&&(linked(r,r.target)||healthy)),relayOnline:!!(primaryMids||healthy)};
+ });
+ const origins=(state.origins||[]).map(n=>({...n,kind:'origin'}));const topology={nodes:[{id:'@controller',kind:'control',name:'数据中台',host:'',online:true},...origins,...relays,...nodes],edges:[...origins.flatMap(n=>[{id:'https:'+n.id,source:n.id,target:n.endpoint,kind:'https',name:'HTTPS 业务接入',transport:'https',enabled:true},{id:'https-return:'+n.id,source:n.endpoint,target:n.id,kind:'https',name:'HTTPS 业务接入',transport:'https',enabled:true}]),...[...relays,...nodes].map(n=>({id:'config:'+n.id,source:'@controller',target:n.id,kind:'control'})),...routes.flatMap(r=>failover.expand(r).flatMap(v=>{const p=routePath.path(v),h=r.failover?.paths?.[v.id];return p.slice(1).map((target,i)=>({id:v.id+':hop:'+i,source:p[i],target,routeId:v.id,name:v.name,transport:v.transport,enabled:v.enabled,ready:r.backupPaths?.length?!!h?.healthy:r.sourceOnline&&r.targetOnline&&r.relayOnline}));}))]};
  return {downloadServices:downloadAccess.list(),topology,origins,tunnels:tunnelModel.normalize(state),httpAccess:state.httpAccess||{},dns:domains.summary(),settings:{...systemSettings.read(state.settings),certificates:certificateSummary()},version:state.version,schema:2,now:new Date().toISOString(),defaultSNI:DEFAULT_SNI,relays,nodes,routes,events:state.events,histories:Object.fromEntries([...history].map(([id,s])=>[id,s.slice(-60)])),control:{version:VERSION,uptime:Math.floor(process.uptime()),memory:process.memoryUsage().rss}};
 }
 const brokerToken=(node,relay)=>crypto.createHmac('sha256',node.token).update('chitanda-broker-v1:'+relay.id).digest('hex');
 const supportedRoute=r=>(!httpAccess.route(state,r,r.source)||[r.source,r.target].every(id=>[...state.nodes,...state.relays].find(n=>n.id===id)?.headerURLSupport===true))&&(!r.direct||routePath.path(r).every(id=>[...state.nodes,...state.relays].find(n=>n.id===id)?.directSupport===true))&&(routePath.relays(r).length===1||routePath.path(r).every(id=>[...state.nodes,...state.relays].find(n=>n.id===id)?.chainSupport===true));
 function baseAgentConfig(id){
- const node=[...state.relays,...state.nodes].find(n=>n.id===id),routes=state.routes.filter(r=>(r.source===id||r.target===id||routePath.relays(r).includes(id))&&supportedRoute(r)).map(r=>({...r,...(httpAccess.route(state,r,id)?{httpAccess:httpAccess.route(state,r,id)}:{})}));
+ const node=[...state.relays,...state.nodes].find(n=>n.id===id),routes=state.routes.flatMap(r=>[...state.nodes,...state.relays].find(n=>n.id===r.source)?.failoverSupport===true?failover.expand(r):[{...r,backupPaths:undefined}]).filter(r=>(r.source===id||r.target===id||routePath.relays(r).includes(id))&&supportedRoute(r)).map(r=>({...r,...(httpAccess.route(state,r,id)?{httpAccess:httpAccess.route(state,r,id)}:{})}));
  const self=state.relays.find(r=>r.id===id)||carrierNodes().find(n=>n.id===id&&routes.some(r=>r.enabled&&routePath.relays(r).includes(id)));
  const peerIds=new Set(routes.map(r=>routePath.link(r,id)).filter(Boolean));
  const peers=carrierNodes().filter(r=>peerIds.has(r.id)&&r.host).map(r=>({id:r.id,host:r.host,port:r.port,streamPort:r.streamPort||11323,serverName:r.serverName,path:r.path,psk:r.psk,ca:state.ca,brokerToken:brokerToken(node,r)}));
@@ -89,7 +94,7 @@ function baseAgentConfig(id){
  return {credentialVersion:'broker-v1',role:'agent',revision:state.version,ca:state.ca,relays:peers,routes};
 }
 function agentConfig(id){const https=state.certificates?.https,node=[...state.nodes,...state.relays].find(n=>n.id===id);return {...baseAgentConfig(id),downloadAccess:downloadAccess.forNode(id),tunnelAccess:tunnelTokens.grants(state,id),httpsCertificate:certificateProfiles.forNode(id)||(https?.mode==='custom'&&https.nodeIds.includes(id)&&node.ingress&&new crypto.X509Certificate(https.certPEM).checkHost(node.ingress.domain)?{certPEM:https.certPEM,keyPEM:https.keyPEM}:null),checks:routeChecks.pending(id)};}
-function validateRoute(input,id){
+function validateRoute(input,id,options={}){
  if(input.enabled!==undefined&&typeof input.enabled!=='boolean')fail('enabled 必须为布尔值');
  const endpoints=[...state.nodes,...state.relays],source=endpoints.find(n=>n.id===input.source),target=endpoints.find(n=>n.id===input.target);
  if(!source||!target||source.id===target.id)fail('请选择不同的起点和终点');
@@ -105,13 +110,19 @@ function validateRoute(input,id){
  const carrierNode=endpoints.find(n=>n.id===relayIds[0]);
  const listenPort=Number(input.listenPort),targetPort=Number(input.targetPort);if(!Number.isInteger(listenPort)||listenPort<1024||listenPort>65535||!Number.isInteger(targetPort)||targetPort<1||targetPort>65535)fail('监听端口应为 1024–65535，目标端口应为 1–65535');
  if(targetPort===5092)fail('控制台管理端口不可作为数据通道目标');
- if(input.enabled!==false)portManager.validate(source.id,listenPort,id);else if(state.routes.some(r=>r.id!==id&&r.source===source.id&&r.listenPort===listenPort))fail('入口端口已分配给其他通道',409);
+ if(!options.backup&&input.enabled!==false)portManager.validate(source.id,listenPort,id);else if(!options.backup&&state.routes.some(r=>r.id!==id&&r.source===source.id&&r.listenPort===listenPort))fail('入口端口已分配给其他通道',409);
  const name=String(input.name||'').trim(),transport=input.transport||'h2';if(!name||name.length>60)fail('线路名称应为 1–60 字符');if(!['h2','h3','stream'].includes(transport))fail('数据协议仅支持 H2、H3 或 Stream');if(input.tlsVerify===false)fail('TLS 证书验证必须启用');
  if(id&&state.domains?.some(b=>[b.mainlandRouteId,b.internationalRouteId].includes(id))&&state.routes.find(r=>r.id===id)?.source!==source.id)fail('已绑定域名的线路不能直接更换源节点',409);
  const serverName=transport==='stream'?'':domain(input.serverName||tunnelModel.defaultServerName(state,input,id)||carrierNodes().find(n=>n.id===relayIds[0])?.serverName||DEFAULT_SNI);
  if(direct&&!state.relays.includes(carrierNode))endpointCarriers.ensure(carrierNode,DEFAULT_SNI);
  const relay=carrierNodes().find(n=>n.id===relayIds[0]);
- return {id:id||crypto.randomUUID(),name,source:source.id,target:target.id,relayId:relay.id,...(input.relayIds?{relayIds:[...relayIds]}:{}),...(direct&&!state.relays.includes(carrierNode)?{direct:true}:{}),transport,serverName,tlsVerify:true,listenPort,targetPort,enabled:input.enabled!==false,createdAt:new Date().toISOString()};
+ const result={id:id||crypto.randomUUID(),name,source:source.id,target:target.id,relayId:relay.id,...(input.relayIds?{relayIds:[...relayIds]}:{}),...(direct&&!state.relays.includes(carrierNode)?{direct:true}:{}),transport,serverName,tlsVerify:true,listenPort,targetPort,enabled:input.enabled!==false,createdAt:new Date().toISOString()};
+ if(!options.backup){
+  const backups=failover.normalize(input.backupPaths===undefined?state.routes.find(r=>r.id===id)?.backupPaths:input.backupPaths,result,v=>validateRoute(v,id,{backup:true}));
+  if(backups.length){if(source.failoverSupport!==true)fail('请先升级入口节点以支持自动故障转移',409);result.backupPaths=backups;}
+  const count=state.routes.filter(r=>r.id!==id).reduce((n,r)=>n+1+(r.backupPaths?.length||0),0)+1+backups.length;if(count>512)fail('主备物理路径合计最多 512 条');
+ }
+ return result;
 }
 async function writeTunnel(input,id){
  const before=structuredClone(state);let tunnel,binding;
@@ -205,11 +216,13 @@ const server=http.createServer((req,res)=>requestContext.run({},async()=>{try{
   r.listeners=Array.isArray(data.listeners)?data.listeners.filter(id=>state.routes.some(v=>v.id===id&&v.source===item.id)).slice(0,128):[];
   r.ports={complete:data.ports?.complete===true&&Array.isArray(data.ports?.tcp)&&data.ports.tcp.length<=4096,tcp:Array.isArray(data.ports?.tcp)?[...new Set(data.ports.tcp.filter(p=>Number.isInteger(p)&&p>0&&p<=65535))].slice(0,4096):[],observedAt:new Date().toISOString()};
   r.listenerErrors={};for(const [routeId,value] of Object.entries(data.listenerErrors||{}).slice(0,128))if(state.routes.some(v=>v.id===routeId&&v.source===item.id)&&['port-in-use','listen-failed'].includes(value))r.listenerErrors[routeId]=value;
-  r.links={};for(const route of state.routes.filter(v=>routePath.path(v).includes(id))){const peer=routePath.link(route,id);if(!peer)continue;const key=[peer,route.transport,route.serverName].join('|'),link=data.links?.[key];if(link&&typeof link==='object')r.links[key]={relayId:peer,transport:route.transport,connected:link.connected===true,latency:finite(link.latency),error:String(link.error||'').slice(0,240)};}
-  if(data.capabilities&&typeof data.capabilities==='object')r.capabilities={transports:Array.isArray(data.capabilities.transports)?[...new Set(data.capabilities.transports.filter(v=>['h2','h3','stream'].includes(v)))]:[],tlsServer:data.capabilities.tlsServer===true,tlsClient:data.capabilities.tlsClient===true,routeProbe:data.capabilities.routeProbe===1?1:0,relayChain:data.capabilities.relayChain===1?1:0,headerURL:data.capabilities.headerURL===1?1:0,directEndpoint:data.capabilities.directEndpoint===1?1:0,downloadAccess:data.capabilities.downloadAccess===1?1:0};
+  r.failover=failover.report(state,id,data.failover);
+  r.links={};for(const route of failover.all(state).filter(v=>routePath.path(v).includes(id))){const peer=routePath.link(route,id);if(!peer)continue;const key=[peer,route.transport,route.serverName].join('|'),link=data.links?.[key];if(link&&typeof link==='object')r.links[key]={relayId:peer,transport:route.transport,connected:link.connected===true,latency:finite(link.latency),error:String(link.error||'').slice(0,240)};}
+  if(data.capabilities&&typeof data.capabilities==='object')r.capabilities={transports:Array.isArray(data.capabilities.transports)?[...new Set(data.capabilities.transports.filter(v=>['h2','h3','stream'].includes(v)))]:[],tlsServer:data.capabilities.tlsServer===true,tlsClient:data.capabilities.tlsClient===true,routeProbe:data.capabilities.routeProbe===1?1:0,relayChain:data.capabilities.relayChain===1?1:0,headerURL:data.capabilities.headerURL===1?1:0,directEndpoint:data.capabilities.directEndpoint===1?1:0,downloadAccess:data.capabilities.downloadAccess===1?1:0,routeFailover:data.capabilities.routeFailover===1?1:0};
   if(data.downloadAccess&&typeof data.downloadAccess==='object')r.downloadAccess={supported:data.downloadAccess.supported===true,ready:data.downloadAccess.ready===true,revision:Math.min(1e9,finite(data.downloadAccess.revision))};
   if(r.capabilities&&item.headerURLSupport!==(r.capabilities.headerURL===1)){item.headerURLSupport=r.capabilities.headerURL===1;save();}
   if(r.capabilities&&item.chainSupport!==(r.capabilities.relayChain===1)){item.chainSupport=r.capabilities.relayChain===1;save();}
+  if(r.capabilities&&item.failoverSupport!==(r.capabilities.routeFailover===1)){item.failoverSupport=r.capabilities.routeFailover===1;save();}
   if(r.capabilities&&item.directSupport!==(r.capabilities.directEndpoint===1)){item.directSupport=r.capabilities.directEndpoint===1;save();}
   r.tls=sanitizeTLS(data.tls,item,state);
   routeChecks.accept(id,data.routeChecks);
@@ -293,7 +306,7 @@ const server=http.createServer((req,res)=>requestContext.run({},async()=>{try{
    if(req.method==='DELETE'){
     if(state.downloadServices?.some(v=>v.nodeId===id))fail('请先移除此节点的下载服务',409);
     const b=await body(req);if(Object.keys(b).some(k=>k!=='cascade')||b.cascade!==undefined&&typeof b.cascade!=='boolean')fail('cascade 必须为布尔值');
-    const linked=state.routes.filter(r=>routePath.path(r).includes(id)),linkedIds=new Set(linked.map(r=>r.id)),affected=state.tunnels.filter(t=>t.routeIds.some(r=>linkedIds.has(r))),affectedIds=new Set(affected.map(t=>t.id));
+    const linked=state.routes.filter(r=>failover.nodeIds(r).includes(id)),linkedIds=new Set(linked.map(r=>r.id)),affected=state.tunnels.filter(t=>t.routeIds.some(r=>linkedIds.has(r))),affectedIds=new Set(affected.map(t=>t.id));
     if(state.domains?.some(b=>affectedIds.has(b.tunnelId)||[b.mainlandRouteId,b.internationalRouteId].some(r=>linkedIds.has(r))))fail('请先处理绑定此节点的业务域名',409);
     if(linked.length&&!b.cascade)return json(res,409,{error:'节点被数据通道引用，请确认一并删除关联数据通道',routes:linked.map(r=>r.name)});
     if(linked.length&&req.managementPrincipal&&!req.managementPrincipal.scopes.includes('tunnels:write'))fail('级联删除还需要 tunnels:write 权限',403);
