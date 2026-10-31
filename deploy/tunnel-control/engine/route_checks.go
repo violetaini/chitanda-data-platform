@@ -127,6 +127,24 @@ func (e *Engine) runRouteCheck(task RouteCheckTask) RouteCheckResult {
 	return result
 }
 func (e *Engine) probeRoute(ctx context.Context, id string) string {
+	if len(e.failoverRoutes(id)) > 1 {
+		for _, r := range e.failoverCandidates(id, e.failoverRoutes(id)) {
+			attempt, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+			c, err := e.openReadyPhysical(attempt, r.ID, "probe")
+			cancel()
+			e.markFailover(id, r.ID, err == nil, false)
+			if c != nil {
+				c.Close()
+			}
+			if err == nil {
+				return ""
+			}
+			if ctx.Err() != nil {
+				return "timeout"
+			}
+		}
+		return "channel-unavailable"
+	}
 	c, err := e.openRouteContext(ctx, id, "probe")
 	if err != nil {
 		var n net.Error

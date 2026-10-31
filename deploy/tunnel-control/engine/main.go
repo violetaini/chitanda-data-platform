@@ -28,21 +28,23 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.13.1"
+const version = "2.14.1"
 
 type Route struct {
-	HTTPAccess *HTTPRouteAccess `json:"httpAccess,omitempty"`
-	RelayIDs   []string         `json:"relayIds,omitempty"`
-	RelayID    string           `json:"relayId"`
-	Transport  string           `json:"transport"`
-	ServerName string           `json:"serverName"`
-	ID         string           `json:"id"`
-	Name       string           `json:"name"`
-	Source     string           `json:"source"`
-	Target     string           `json:"target"`
-	ListenPort int              `json:"listenPort"`
-	TargetPort int              `json:"targetPort"`
-	Enabled    bool             `json:"enabled"`
+	ParentRouteID    string           `json:"parentRouteId,omitempty"`
+	FallbackRouteIDs []string         `json:"fallbackRouteIds,omitempty"`
+	HTTPAccess       *HTTPRouteAccess `json:"httpAccess,omitempty"`
+	RelayIDs         []string         `json:"relayIds,omitempty"`
+	RelayID          string           `json:"relayId"`
+	Transport        string           `json:"transport"`
+	ServerName       string           `json:"serverName"`
+	ID               string           `json:"id"`
+	Name             string           `json:"name"`
+	Source           string           `json:"source"`
+	Target           string           `json:"target"`
+	ListenPort       int              `json:"listenPort"`
+	TargetPort       int              `json:"targetPort"`
+	Enabled          bool             `json:"enabled"`
 }
 type Node struct {
 	ID    string `json:"id"`
@@ -100,38 +102,46 @@ type Hello struct {
 	Error      string `json:"error,omitempty"`
 }
 type Engine struct {
-	httpTransport    func(HTTPDestination) *http.Transport
-	endpointMu       sync.Mutex
-	endpointStop     chan struct{}
-	endpointStopping bool
-	syncMu           sync.Mutex
-	checkMu          sync.Mutex
-	checkBusy        bool
-	checkResults     map[string]RouteCheckResult
-	links            map[string]*Link
-	cert             atomic.Pointer[tls.Certificate]
-	publicCert       atomic.Pointer[tls.Certificate]
-	serverTLS        atomic.Pointer[tls.Config]
-	transports       []string
-	connections      map[*slotConn]Hello
-	mu               sync.RWMutex
-	cfg              Config
-	started          time.Time
-	rx               atomic.Int64
-	tx               atomic.Int64
-	active           atomic.Int64
-	connects         atomic.Int64
-	latency          atomic.Int64
-	lastError        string
-	pools            map[string]chan net.Conn
-	listeners        map[string]net.Listener
-	listenerErrors   map[string]string
-	listenerMu       sync.Mutex
-	outbound         chan struct{}
-	slots            chan struct{}
-	brokerAddress    string
-	clientMu         sync.Mutex
-	cli              *client.Client
+	replayCacheFile     string
+	listenerModes       map[string]bool
+	failoverMu          sync.Mutex
+	failoverStates      map[string]*routeFailoverState
+	failoverStop        chan struct{}
+	failoverProbeSlots  chan struct{}
+	failoverProbeCursor int
+	readyRouteDial      func(context.Context, string, string) (net.Conn, error)
+	httpTransport       func(HTTPDestination) *http.Transport
+	endpointMu          sync.Mutex
+	endpointStop        chan struct{}
+	endpointStopping    bool
+	syncMu              sync.Mutex
+	checkMu             sync.Mutex
+	checkBusy           bool
+	checkResults        map[string]RouteCheckResult
+	links               map[string]*Link
+	cert                atomic.Pointer[tls.Certificate]
+	publicCert          atomic.Pointer[tls.Certificate]
+	serverTLS           atomic.Pointer[tls.Config]
+	transports          []string
+	connections         map[*slotConn]Hello
+	mu                  sync.RWMutex
+	cfg                 Config
+	started             time.Time
+	rx                  atomic.Int64
+	tx                  atomic.Int64
+	active              atomic.Int64
+	connects            atomic.Int64
+	latency             atomic.Int64
+	lastError           string
+	pools               map[string]chan net.Conn
+	listeners           map[string]net.Listener
+	listenerErrors      map[string]string
+	listenerMu          sync.Mutex
+	outbound            chan struct{}
+	slots               chan struct{}
+	brokerAddress       string
+	clientMu            sync.Mutex
+	cli                 *client.Client
 }
 
 func safeEqual(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }
@@ -209,7 +219,7 @@ func (e *Engine) report() map[string]any {
 			return 1
 		}
 		return 0
-	}(), "routeProbe": 1, "relayChain": 1, "headerURL": 1, "directEndpoint": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports}
+	}(), "routeFailover": 1, "routeProbe": 1, "relayChain": 1, "headerURL": 1, "directEndpoint": 1, "transports": protocols, "tlsServer": e.serverTLS.Load() != nil, "tlsClient": len(e.links) > 0}, "ingress": e.ingressReportLocked(), "tls": e.tlsReportLocked(), "version": version, "uptime": int64(time.Since(e.started).Seconds()), "memory": memory, "goroutines": runtime.NumGoroutine(), "rx": e.rx.Load(), "tx": e.tx.Load(), "active": e.active.Load(), "connections": e.connects.Load(), "latency": float64(e.latency.Load()) / 1e6, "revision": e.cfg.Revision, "errors": e.lastError, "listeners": ls, "links": linkReports, "failover": e.failoverSnapshot()}
 }
 func (e *Engine) syncConfig() error {
 	e.syncMu.Lock()
@@ -244,7 +254,7 @@ func (e *Engine) syncConfig() error {
 		return fmt.Errorf("controller returned %d", resp.StatusCode)
 	}
 	var update Config
-	if err = json.NewDecoder(io.LimitReader(resp.Body, 131072)).Decode(&update); err != nil {
+	if err = json.NewDecoder(io.LimitReader(resp.Body, 2097152)).Decode(&update); err != nil {
 		return err
 	}
 	if update.SelfRelay != nil {
@@ -612,7 +622,11 @@ func (e *Engine) runRelayUntil(stop <-chan struct{}) error {
 	if err != nil || len(psk) < 32 {
 		return errors.New("invalid relay PSK")
 	}
-	replays, err := auth.OpenReplayCache("/var/lib/chitanda-transit/replay.db", time.Now())
+	replayFile := e.replayCacheFile
+	if replayFile == "" {
+		replayFile = "/var/lib/chitanda-transit/replay.db"
+	}
+	replays, err := auth.OpenReplayCache(replayFile, time.Now())
 	if err != nil {
 		return err
 	}
@@ -738,21 +752,23 @@ func (e *Engine) dialContext(ctx context.Context, cli *client.Client, h Hello) (
 	return c, nil
 }
 func (e *Engine) reconcileListeners() {
+	e.syncFailoverProbes()
 	e.listenerMu.Lock()
 	defer e.listenerMu.Unlock()
 	cfg := e.config()
 	desired := map[string]Route{}
 	for _, r := range cfg.Routes {
-		if r.Enabled && r.Source == cfg.ID {
+		if r.Enabled && r.Source == cfg.ID && r.ParentRouteID == "" {
 			desired[r.ID] = r
 		}
 	}
 	e.mu.Lock()
 	for id, ln := range e.listeners {
 		r, ok := desired[id]
-		if !ok || ln.Addr().String() != net.JoinHostPort("127.0.0.1", fmt.Sprint(r.ListenPort)) {
+		if !ok || ln.Addr().String() != net.JoinHostPort("127.0.0.1", fmt.Sprint(r.ListenPort)) || e.listenerModes[id] != (r.HTTPAccess != nil && len(r.FallbackRouteIDs) > 0) {
 			ln.Close()
 			delete(e.listeners, id)
+			delete(e.listenerModes, id)
 		}
 	}
 	e.mu.Unlock()
@@ -788,8 +804,16 @@ func (e *Engine) reconcileListeners() {
 		e.mu.Lock()
 		delete(e.listenerErrors, id)
 		e.listeners[id] = ln
+		if e.listenerModes == nil {
+			e.listenerModes = map[string]bool{}
+		}
+		e.listenerModes[id] = r.HTTPAccess != nil && len(r.FallbackRouteIDs) > 0
 		e.mu.Unlock()
-		go e.serveListener(ln, r.ID)
+		if r.HTTPAccess != nil && len(r.FallbackRouteIDs) > 0 {
+			go e.serveFailoverHTTPSource(ln, r.ID)
+		} else {
+			go e.serveListener(ln, r.ID)
+		}
 	}
 }
 func (e *Engine) serveListener(ln net.Listener, id string) {
@@ -803,22 +827,14 @@ func (e *Engine) serveListener(ln net.Listener, id string) {
 			go func() {
 				defer func() { <-e.outbound }()
 				defer c.Close()
-				peer, err := e.openRoute(id)
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				peer, err := e.openReadyFailover(ctx, id)
+				cancel()
 				if err != nil {
 					e.err(err)
 					return
 				}
 				defer peer.Close()
-				peer.SetReadDeadline(time.Now().Add(15 * time.Second))
-				h, err := receive(peer)
-				peer.SetReadDeadline(time.Time{})
-				if err != nil || !h.OK {
-					if err == nil {
-						err = errors.New(h.Error)
-					}
-					e.err(err)
-					return
-				}
 				e.connects.Add(1)
 				e.bridge(c, peer)
 			}()

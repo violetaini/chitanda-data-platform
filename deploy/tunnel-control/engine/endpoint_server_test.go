@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
-	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -14,9 +14,6 @@ import (
 func TestDirectEndpointCarrierLifecycle(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("target Linux listener lifecycle")
-	}
-	if err := os.MkdirAll("/var/lib/chitanda-transit", 0700); err != nil {
-		t.Fatal(err)
 	}
 	freePort := func() int {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -28,6 +25,7 @@ func TestDirectEndpointCarrierLifecycle(t *testing.T) {
 		return port
 	}
 	e := testEngine(t)
+	e.replayCacheFile = filepath.Join(t.TempDir(), "replay.db")
 	e.cfg.Role = "agent"
 	e.cfg.ID = "direct-endpoint"
 	e.cfg.Routes = nil

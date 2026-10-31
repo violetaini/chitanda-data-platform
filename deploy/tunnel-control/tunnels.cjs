@@ -46,7 +46,7 @@ module.exports=function({getState,validateRoute,ensureCertificates,audit}){
     const prev=old&&before.find(r=>r.id===old.routeIds[1]);
     // Keep the old reverse route visible to endpoint guards while validating.
     if(prev)s.routes.push(prev);
-    const b=validateRoute({...values,...prev,...input,name,enabled:values.enabled,source:a.target,target:a.source,direct:a.direct===true,listenPort:input.reverseListenPort??prev?.listenPort??a.listenPort,targetPort:input.reverseTargetPort??prev?.targetPort??a.targetPort,...(a.relayIds?{relayIds:[...a.relayIds].reverse(),relayId:a.relayIds.at(-1)}:{})},prev?.id);
+    const b=validateRoute({...values,...prev,...input,name,enabled:values.enabled,source:a.target,target:a.source,direct:a.direct===true,listenPort:input.reverseListenPort??prev?.listenPort??a.listenPort,targetPort:input.reverseTargetPort??prev?.targetPort??a.targetPort,...(a.relayIds?{relayIds:[...a.relayIds].reverse(),relayId:a.relayIds.at(-1)}:{}),...(a.backupPaths?{backupPaths:a.backupPaths.map(p=>({id:p.id,name:p.name,relayIds:[...p.relayIds].reverse(),transport:p.transport,serverName:p.serverName,...(p.direct?{direct:true}:{})}))}:{backupPaths:[]})},prev?.id);
     s.routes=s.routes.filter(r=>r.id!==b.id).concat({...b,createdAt:prev?.createdAt||b.createdAt});ids.push(b.id);
    }
    s.routes=s.routes.map(r=>r.id===a.id?{...r,createdAt:first?.createdAt||r.createdAt}:r);
