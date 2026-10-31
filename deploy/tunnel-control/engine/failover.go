@@ -128,6 +128,23 @@ func (e *Engine) failoverCandidates(id string, routes []Route) []Route {
 			out = append(out, r)
 		}
 	}
+	// Negative probes can be stale by the time a request arrives. Keep cooling
+	// paths as a last resort rather than returning an avoidable outage after
+	// the currently available paths fail. No business bytes have been sent yet.
+	for _, r := range routes {
+		if r.ID == preferred {
+			if p := s.Paths[r.ID]; p != nil && p.RetryAt > now {
+				out = append(out, r)
+			}
+		}
+	}
+	for _, r := range routes {
+		if r.ID != preferred {
+			if p := s.Paths[r.ID]; p != nil && p.RetryAt > now {
+				out = append(out, r)
+			}
+		}
+	}
 	return out
 }
 func (e *Engine) openReadyPhysical(ctx context.Context, id, kind string) (net.Conn, error) {

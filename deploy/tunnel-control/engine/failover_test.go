@@ -65,6 +65,35 @@ func TestFailoverOrderedRetryAndRecovery(t *testing.T) {
 		t.Fatal("cross-target fallback accepted")
 	}
 }
+func TestCoolingBackupRemainsAvailableAfterPrimaryFailure(t *testing.T) {
+	e := failoverEngine()
+	e.markFailover("main", "backup", false, false)
+	e.markFailover("main", "second", false, false)
+	var calls []string
+	e.readyRouteDial = func(ctx context.Context, id, kind string) (net.Conn, error) {
+		calls = append(calls, id)
+		if id == "main" {
+			return nil, errors.New("primary link cut")
+		}
+		a, b := net.Pipe()
+		b.Close()
+		return a, nil
+	}
+	c, err := e.openReadyFailover(context.Background(), "main")
+	if err != nil {
+		t.Fatal("stale negative probe prevented backup", err)
+	}
+	c.Close()
+	if strings.Join(calls, ",") != "main,backup" {
+		t.Fatal(calls)
+	}
+	for _, r := range e.failoverRoutes("main") {
+		e.markFailover("main", r.ID, false, false)
+	}
+	if len(e.failoverCandidates("main", e.failoverRoutes("main"))) != 3 {
+		t.Fatal("all cooling paths were suppressed")
+	}
+}
 func TestFailoverHTTPDoesNotReplayWritesAndRetriesReads(t *testing.T) {
 	for _, method := range []string{"GET", "POST"} {
 		t.Run(method, func(t *testing.T) {

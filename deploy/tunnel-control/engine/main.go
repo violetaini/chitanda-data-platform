@@ -28,7 +28,7 @@ import (
 	"github.com/violetaini/chitanda/pkg/server"
 )
 
-const version = "2.14.0"
+const version = "2.14.1"
 
 type Route struct {
 	ParentRouteID    string           `json:"parentRouteId,omitempty"`
