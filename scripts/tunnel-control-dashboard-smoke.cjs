@@ -4,8 +4,23 @@ const {createAdminPasswordHash}=require('../deploy/tunnel-control/password-auth.
 (async()=>{const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ct-dashboard-')),password='Chart-Test-2026!',base='http://127.0.0.1:5096';let browser,count=0;const child=spawn(process.execPath,['deploy/tunnel-control/server.cjs'],{cwd:path.resolve(__dirname,'..'),windowsHide:true,stdio:'ignore',env:{...process.env,CT_PORT:'5096',CT_DATA:dir,CT_USERNAME:'chart-admin',CT_PASSWORD_HASH:await createAdminPasswordHash(password),CT_INSECURE:'1',CT_OPENSSL:process.platform==='win32'?'C:/Program Files/Git/usr/bin/openssl.exe':'openssl'}});const check=(v,m)=>{assert.ok(v,m);count++;};try{
 for(let i=0;i<80;i++){try{if((await fetch(base+'/health')).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
 const {chromium}=require('playwright');browser=await chromium.launch({headless:true});const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
-// Only this isolated browser fixture supplies synthetic history for visual and interaction QA.
-await page.route('**/tunnel/api/state',async route=>{const response=await route.fetch(),state=await response.json(),now=Date.now();let rx=10000,tx=10000;state.now=new Date(now).toISOString();state.histories['relay-hk']=Array.from({length:61},(_,i)=>{rx+=Math.round((1200+1000*Math.sin(i*.23))*15);tx+=Math.round((700+600*Math.cos(i*.29))*15);return {at:now-(60-i)*15000,rx,tx,uptime:i*15+10};});await route.fulfill({response,json:state});});
+// Only this isolated browser fixture supplies synthetic dashboard data.
+let tallTopology = false;
+await page.route('**/tunnel/api/state', async route => {
+ const response = await route.fetch(), state = await response.json(), now = Date.now();
+ let rx = 10000, tx = 10000;
+ state.now = new Date(now).toISOString();
+ state.histories['relay-hk'] = Array.from({length:61}, (_, i) => {
+  rx += Math.round((1200 + 1000 * Math.sin(i * .23)) * 15);
+  tx += Math.round((700 + 600 * Math.cos(i * .29)) * 15);
+  return {at:now - (60 - i) * 15000, rx, tx, uptime:i * 15 + 10};
+ });
+ if (tallTopology) {
+  state.topology.nodes.push({id:'fixture-origin', kind:'origin', name:'测试源站', endpoint:'relay-hk'});
+  for (let i = 0; i < 6; i++) state.topology.nodes.push({id:`fixture-relay-${i}`, kind:'relay', name:`测试优化机 ${i}`});
+ }
+ await route.fulfill({response, json:state});
+});
 await page.goto(base+'/tunnel/');await page.locator('#login-form [name=username]').fill('chart-admin');await page.locator('#login-form [name=password]').fill(password);await page.locator('.login-submit').click();await page.locator('#shell').waitFor({state:'visible'});
 const output=path.resolve('tmp/dashboard-security-qa');fs.mkdirSync(output,{recursive:true});
 for(const width of [1440,1024,390]){
@@ -18,5 +33,22 @@ for(const width of [1440,1024,390]){
 await page.setViewportSize({width:1440,height:1050});await page.locator('nav [data-view=overview]').click();
 const created=await page.evaluate(()=>api('nodes',{method:'POST',body:JSON.stringify({name:'自动生成的新节点'})}));await page.evaluate(()=>refresh());check(await page.locator(`[data-node-id="${created.node.id}"]`).count()===1,'new registration appears automatically');
 await page.evaluate(id=>api('nodes/'+id,{method:'DELETE',body:'{}'}),created.node.id);await page.evaluate(()=>refresh());check(await page.locator(`[data-node-id="${created.node.id}"]`).count()===0,'removed registration disappears automatically');
+tallTopology = true;
+await page.evaluate(() => refresh());
+await page.locator('[data-node-id="fixture-relay-5"]').waitFor();
+for (const width of [1440, 390]) {
+ await page.setViewportSize({width, height:844});
+ await page.getByRole('button', {name:'放大拓扑'}).click();
+ await page.getByRole('button', {name:'适应画布'}).click();
+ const geometry = await page.locator('#topology-canvas').evaluate(canvas => {
+  const graph = canvas.querySelector(':scope > svg').getBoundingClientRect();
+  const frame = canvas.getBoundingClientRect();
+  return {height:graph.height, complete:graph.bottom <= frame.bottom && graph.right <= frame.right,
+   fits:canvas.scrollHeight <= canvas.clientHeight + 1 && canvas.scrollWidth <= canvas.clientWidth + 1};
+ });
+ check(geometry.complete && geometry.fits, 'entire tall topology fits its canvas at width ' + width);
+ if (width === 1440) check(geometry.height > 460, 'fixture exceeds the former desktop height limit');
+}
+await page.setViewportSize({width:1440, height:1050});
 const cdp=await page.context().newCDPSession(page);await cdp.send('DOM.enable');await cdp.send('CSS.enable');const root=await cdp.send('DOM.getDocument'),heading=await cdp.send('DOM.querySelector',{nodeId:root.root.nodeId,selector:'#content h1'}),fonts=await cdp.send('CSS.getPlatformFontsForNode',{nodeId:heading.nodeId});console.log('Heading fonts:',fonts.fonts.map(f=>f.familyName).join(', '));check(errors.length===0,'browser errors '+errors.join(';'));console.log(`PASS ${count} dashboard checks: font stack, automatic graph updates, time-series curves, tooltip, keyboard controls and responsive security settings.`);
 }finally{if(browser)await browser.close();await new Promise(resolve=>{child.once('exit',resolve);child.kill();});fs.rmSync(dir,{recursive:true,force:true});}})().catch(e=>{console.error(e);process.exitCode=1;});

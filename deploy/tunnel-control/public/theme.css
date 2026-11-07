@@ -87,6 +87,7 @@ body,body *{font-family:var(--font)!important}
 .dashboard-grid{align-items:stretch}
 .dashboard-grid>.topology-panel{display:flex;flex-direction:column}
 .dashboard-grid>.topology-panel .topology-footer{margin-top:auto}
+.topology-panel .multi-topology.is-fit{flex:1 0 auto;max-height:none;align-content:center}
 .dashboard-grid>.relay-panel{align-self:stretch;display:flex;flex-direction:column}
 .dashboard-grid>.relay-panel .relay-note{margin-top:auto}
 .dashboard-grid>.chart-panel{grid-column:1/-1;margin-top:0}
